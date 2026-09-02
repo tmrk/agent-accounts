@@ -19,6 +19,7 @@ import { parseSwitchArgs, type SwitchOptions } from "./switch-options.js";
 import { parseAddArgs, type AddOptions } from "./add-options.js";
 import { runCodexLogin } from "./codex-login.js";
 import { questionOrEscape } from "./interactive.js";
+import { parseLiveArgs, runLive } from "./live.js";
 import type { StoredAccount, CodexAuthFile, AdminKeyEntry, ApiKeyUsageSnapshot, AccountUsage } from "./types.js";
 
 const USAGE_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
@@ -28,6 +29,8 @@ const HELP = `agent-accounts (aa) - Manage Codex, Claude Code, and Grok Build ac
 Usage:
   aa                         Show usage across all providers
   aa status                  Show usage across all providers
+  aa status --live           Refresh usage in place every 30 seconds
+  aa status --live --interval 10
   aa codex [command]         Manage Codex accounts
   aa claude [command]        Manage Claude Code accounts
   aa grok [command]          Manage Grok Build accounts
@@ -382,6 +385,7 @@ async function cmdUsage(daysArg?: string): Promise<void> {
 
 /** Soft TTL: data older than this triggers a background refresh on default view. */
 const USAGE_REFRESH_AFTER_MS = 5 * 60 * 1000; // 5 min
+let lastBackgroundRefreshSpawnAt = 0;
 
 /**
  * If any API-key account has stale (or no) cache and an admin key exists,
@@ -389,6 +393,8 @@ const USAGE_REFRESH_AFTER_MS = 5 * 60 * 1000; // 5 min
  * wait. Next `aa` invocation reads the updated cache.
  */
 function maybeSpawnBackgroundRefresh(): void {
+  if (Date.now() - lastBackgroundRefreshSpawnAt < USAGE_REFRESH_AFTER_MS) return;
+
   const accounts = listAccounts().filter(a => a.auth.auth_mode === "apikey");
   if (accounts.length === 0) return;
   const admins = listAdminKeys();
@@ -418,6 +424,7 @@ function maybeSpawnBackgroundRefresh(): void {
     stdio,
     env: { ...process.env, AA_BG_REFRESH: "1" },
   });
+  lastBackgroundRefreshSpawnAt = Date.now();
   child.unref();
 }
 
@@ -889,8 +896,32 @@ async function cmdAllStatus(): Promise<void> {
   await grokStatus();
 }
 
+async function cmdLiveStatus(args: string[], intervalSeconds: number): Promise<void> {
+  let render: (() => Promise<void>) | undefined;
+
+  if (args.length === 0 || (args.length === 1 && args[0] === "status")) {
+    render = cmdAllStatus;
+  } else if (args[0] === "codex" && (args.length === 1 || (args.length === 2 && args[1] === "status"))) {
+    render = cmdStatus;
+  } else if (args[0] === "claude" && (args.length === 1 || (args.length === 2 && args[1] === "status"))) {
+    render = claudeStatus;
+  } else if (args[0] === "grok" && (args.length === 1 || (args.length === 2 && args[1] === "status"))) {
+    render = grokStatus;
+  }
+
+  if (!render) {
+    throw new Error("--live is supported by status views: aa status, aa codex status, aa claude status, or aa grok status.");
+  }
+
+  await runLive(render, intervalSeconds);
+}
+
 async function main(): Promise<void> {
-  const args = process.argv.slice(2);
+  const parsed = parseLiveArgs(process.argv.slice(2));
+  const args = parsed.args;
+  if (parsed.options.enabled) {
+    return cmdLiveStatus(args, parsed.options.intervalSeconds);
+  }
   const command = args[0];
   if (!command || command === "status") return cmdAllStatus();
   switch (command) {

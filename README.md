@@ -26,6 +26,8 @@ npm install -g --prefix "$HOME/.local" github:tmrk/agent-accounts
 
 ```bash
 aa status                         # usage across all providers
+aa status --live                  # refresh the usage display every 30s
+aa status --live --interval 10    # choose a refresh interval (5-3600s)
 
 aa codex add --device-auth        # add a Codex account
 aa claude add                     # add a Claude Code account
@@ -37,6 +39,11 @@ aa grok                           # usage + interactive Grok switcher
 ```
 
 The original flat Codex commands remain aliases, so `aa add`, `aa switch`, and `aa usage` work too.
+
+Live mode fetches fresh subscription usage on every refresh and redraws the terminal, so the
+remaining percentages fall as the coding agents consume their limits. It is opt-in and can also
+be scoped to one provider with `aa codex --live`, `aa claude --live`, or `aa grok --live`.
+Press Ctrl-C to stop. API-key spend remains backed by its slower billing cache.
 
 ## Codex
 
