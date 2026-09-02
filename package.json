@@ -1,0 +1,36 @@
+{
+  "name": "agent-accounts",
+  "version": "0.1.0",
+  "description": "Manage multiple Codex, Claude Code, and Grok Build accounts and usage",
+  "type": "module",
+  "files": [
+    "dist"
+  ],
+  "bin": {
+    "aa": "dist/index.js",
+    "agent-accounts": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "start": "node dist/index.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "@types/node": "^22.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tmrk/agent-accounts.git"
+  },
+  "bugs": {
+    "url": "https://github.com/tmrk/agent-accounts/issues"
+  },
+  "homepage": "https://github.com/tmrk/agent-accounts#readme",
+  "license": "MIT"
+}

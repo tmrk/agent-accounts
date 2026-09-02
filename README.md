@@ -1,0 +1,116 @@
+# agent-accounts
+
+Manage multiple accounts and see usage for the three major coding-agent CLIs:
+
+- OpenAI Codex
+- Anthropic Claude Code
+- xAI Grok Build
+
+Each provider keeps its own isolated credentials. Account usage is fetched in parallel within each provider, and switching does not sign other stored accounts out.
+
+## Install
+
+```bash
+npm install -g github:tmrk/agent-accounts
+```
+
+This installs both `aa` and `agent-accounts`. Node.js 18+ is required, along with the provider CLIs you intend to use.
+
+If your npm global bin directory is not on `PATH` (including the Raspberry Pi setup used to test this project), install into `~/.local`, which is already on `PATH`:
+
+```bash
+npm install -g --prefix "$HOME/.local" github:tmrk/agent-accounts
+```
+
+## Quick start
+
+```bash
+aa status                         # usage across all providers
+
+aa codex add --device-auth        # add a Codex account
+aa claude add                     # add a Claude Code account
+aa grok add --device-auth         # add a Grok Build account
+
+aa codex                          # usage + interactive Codex switcher
+aa claude                         # usage + interactive Claude switcher
+aa grok                           # usage + interactive Grok switcher
+```
+
+The original flat Codex commands remain aliases, so `aa add`, `aa switch`, and `aa usage` work too.
+
+## Codex
+
+```bash
+aa codex add [--device-auth]      # isolated OAuth login
+aa codex add-key                  # API-key account
+aa codex import                   # import ~/.codex/auth.json
+aa codex list
+aa codex switch [email]
+aa codex gui-switch [email]       # switch and restart Codex.app on macOS
+aa codex remove <email>
+aa codex usage [days]             # API spend via an attached admin key
+```
+
+Codex OAuth profiles show the rolling five-hour and weekly limits, extra applicable buckets, plan, and credit balance. API-key accounts can show daily, weekly, and monthly spend when an OpenAI admin key and project are attached.
+
+## Claude Code
+
+```bash
+aa claude add [name]
+aa claude list
+aa claude switch [name]
+aa claude run [name] [...args]
+aa claude remove <name>
+aa claude env
+```
+
+Claude profiles use separate `CLAUDE_CONFIG_DIR` directories and show five-hour, weekly, model-specific, and extra-usage limits when available.
+
+To make the selected profile active for direct `claude` invocations:
+
+```bash
+eval "$(aa claude env)"
+```
+
+Add that line to `.zshrc` or `.bashrc` if you want `aa claude switch` to control future shells automatically. `aa claude run <name>` needs no shell integration.
+
+## Grok Build
+
+```bash
+aa grok add [name] [--device-auth]
+aa grok list
+aa grok switch [name]
+aa grok run [name] [...args]
+aa grok remove <name>
+aa grok env
+```
+
+Grok profiles use separate `GROK_HOME` directories. They show the weekly or monthly included-credit pool, reset time, prepaid credits, on-demand usage, and subscription tier—the same account-wide data used by Grok Build's `/usage` view.
+
+To make the selected profile active for direct `grok` invocations:
+
+```bash
+eval "$(aa grok env)"
+```
+
+Grok Build officially supports `GROK_HOME`, browser OAuth, and `grok login --device-auth`; see the [Grok Build authentication guide](https://docs.x.ai/build/authentication) and [settings reference](https://docs.x.ai/build/settings).
+
+## Storage and migration
+
+agent-accounts stores profile metadata and isolated provider homes under `~/.agent-accounts/`, with credential files written owner-only by this app or the provider CLI. Codex still activates an account through its standard `~/.codex/auth.json` file.
+
+On first run, if `~/.agent-accounts/` does not exist but `~/.codex-accounts/` does, the old store is copied to the new location. The old directory is left intact, so the existing `codex-accounts` installation and its PR workflow are unaffected.
+
+Usage integrations for subscription accounts call the same provider endpoints their CLIs use. Those endpoints are not stable public billing APIs and may change when a provider updates its CLI.
+
+## Development
+
+```bash
+npm install
+npm test
+npm start -- help
+```
+
+## License
+
+MIT
