@@ -1,4 +1,11 @@
 import type { ClaudeProfile, ClaudeAuthStatus, ClaudeCredentialInfo, ClaudeUsageResponse } from "./types.js";
+interface ClaudeUsageCacheEntry {
+    fetchedAt?: string;
+    usage?: ClaudeUsageResponse;
+    retryAfterAt?: string;
+}
+export declare function readClaudeUsageCache(profileName: string): ClaudeUsageCacheEntry | null;
+export declare function writeClaudeUsageCache(profileName: string, entry: ClaudeUsageCacheEntry): void;
 export declare function validateProfileName(name: string): string | null;
 /** Resolve the instance directory path for a profile.
  *  Uses the stored `dir` field if available, otherwise derives from name. */
@@ -27,5 +34,13 @@ export declare function getAuthStatusForPath(instancePath: string): Promise<Clau
 export declare function getAuthStatusAsync(name: string): Promise<ClaudeAuthStatus | null>;
 /** Read Claude credential from macOS Keychain or .credentials.json fallback */
 export declare function readCredential(instancePath: string): Promise<ClaudeCredentialInfo | null>;
+/** Refresh an expiring Claude OAuth credential and persist any rotated tokens. */
+export declare function ensureFreshClaudeCredential(instancePath: string, credential: ClaudeCredentialInfo, fetchImpl?: typeof fetch): Promise<ClaudeCredentialInfo>;
+export declare class ClaudeUsageError extends Error {
+    status?: number | undefined;
+    retryAfterSeconds?: number | undefined;
+    constructor(message: string, status?: number | undefined, retryAfterSeconds?: number | undefined);
+}
 /** Fetch rate limit utilization from /api/oauth/usage */
-export declare function fetchClaudeUsage(accessToken: string): Promise<ClaudeUsageResponse | null>;
+export declare function fetchClaudeUsage(accessToken: string, fetchImpl?: typeof fetch): Promise<ClaudeUsageResponse>;
+export {};

@@ -237,7 +237,10 @@ export function displayAccountList(accounts) {
 // --- Claude Code profile display ---
 /** Format ISO reset time as relative duration */
 function formatResetTime(resetsAt) {
-    const remaining = new Date(resetsAt).getTime() - Date.now();
+    const timestamp = typeof resetsAt === "number"
+        ? (resetsAt < 100000000000 ? resetsAt * 1000 : resetsAt)
+        : new Date(resetsAt).getTime();
+    const remaining = timestamp - Date.now();
     if (remaining <= 0)
         return "now";
     const days = Math.floor(remaining / 86400000);
@@ -291,6 +294,30 @@ function collectClaudeRows(p) {
             usedPercent: p.usage.extra_usage.utilization,
         });
     }
+    // Claude Code 2.1+ may return generic buckets instead of the legacy fields.
+    const existingLabels = new Set(rows.map(row => row.label));
+    for (const limit of p.usage.limits ?? []) {
+        if (limit.percent == null)
+            continue;
+        const model = limit.scope?.model?.display_name;
+        let label;
+        if (limit.kind === "session")
+            label = "5h limit";
+        else if (limit.kind === "weekly_all")
+            label = "7d limit";
+        else if (limit.kind === "weekly_scoped" && model)
+            label = `${model} (weekly)`;
+        else
+            label = limit.kind.replaceAll("_", " ");
+        if (existingLabels.has(label))
+            continue;
+        rows.push({
+            label,
+            usedPercent: limit.percent,
+            resetsIn: limit.resets_at != null ? formatResetTime(limit.resets_at) : undefined,
+        });
+        existingLabels.add(label);
+    }
     return rows;
 }
 function displayClaudeProfile(p, globalLabelWidth, index) {
@@ -325,6 +352,10 @@ function displayClaudeProfile(p, globalLabelWidth, index) {
     else {
         // No usage data — show email as fallback info
         console.log(`  ${DIM}${p.auth.email || "unknown"}${org}${RESET}`);
+    }
+    if (p.usageError) {
+        const cached = rows.length > 0 && p.usageCachedAt ? "; showing cached usage" : "";
+        console.log(`  ${DIM}${p.usageError}${cached}${RESET}`);
     }
     console.log();
 }

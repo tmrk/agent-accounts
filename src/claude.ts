@@ -6,6 +6,8 @@ import {
   detectClaudeCli, getAuthStatusAsync, getAuthStatusForPath,
   validateProfileName, createTempInstance, registerProfile,
   cleanupInstance, readCredential, fetchClaudeUsage,
+  ensureFreshClaudeCredential, ClaudeUsageError,
+  readClaudeUsageCache, writeClaudeUsageCache,
 } from "./claude-store.js";
 import { displayClaudeProfiles, displayClaudeProfilesNumbered } from "./display.js";
 import { questionOrEscape } from "./interactive.js";
@@ -53,12 +55,46 @@ async function fetchInfos(): Promise<ClaudeProfileInfo[]> {
   const infos = await Promise.all(
     withCreds.map(async ({ profile: p, auth, credential, error }): Promise<ClaudeProfileInfo> => {
       let usage = null;
+      let usageError: string | undefined;
+      let usageCachedAt: string | undefined;
       if (credential?.accessToken && !error) {
+        const cached = readClaudeUsageCache(p.name);
         try {
-          usage = await fetchClaudeUsage(credential.accessToken);
-        } catch { /* ignore */ }
+          credential = await ensureFreshClaudeCredential(getInstancePath(p.name), credential);
+          const retryAfterAt = cached?.retryAfterAt ? new Date(cached.retryAfterAt).getTime() : 0;
+          if (retryAfterAt > Date.now()) {
+            usage = cached?.usage ?? null;
+            usageCachedAt = cached?.fetchedAt;
+            usageError = `usage rate limited; retry in ${Math.max(1, Math.ceil((retryAfterAt - Date.now()) / 60000))}m`;
+          } else {
+            usage = await fetchClaudeUsage(credential.accessToken!);
+            usageCachedAt = new Date().toISOString();
+            writeClaudeUsageCache(p.name, { usage, fetchedAt: usageCachedAt });
+          }
+        } catch (usageErr) {
+          usage = cached?.usage ?? null;
+          usageCachedAt = cached?.fetchedAt;
+          if (usageErr instanceof ClaudeUsageError && usageErr.status === 429) {
+            const seconds = usageErr.retryAfterSeconds ?? 300;
+            const retryAfterAt = new Date(Date.now() + seconds * 1000).toISOString();
+            writeClaudeUsageCache(p.name, { usage: cached?.usage, fetchedAt: cached?.fetchedAt, retryAfterAt });
+            usageError = `usage rate limited; retry in ${Math.max(1, Math.ceil(seconds / 60))}m`;
+          } else {
+            usageError = (usageErr as Error).message;
+          }
+        }
       }
-      return { name: p.name, isActive: p.name === active, createdAt: p.createdAt, auth, credential, usage, error };
+      return {
+        name: p.name,
+        isActive: p.name === active,
+        createdAt: p.createdAt,
+        auth,
+        credential,
+        usage,
+        usageError,
+        usageCachedAt,
+        error,
+      };
     })
   );
 

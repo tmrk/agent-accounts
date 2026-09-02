@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { createProfile, listProfiles, findProfile, removeProfile, getActiveProfile, setActiveProfile, getInstancePath, detectClaudeCli, getAuthStatusAsync, getAuthStatusForPath, validateProfileName, createTempInstance, registerProfile, cleanupInstance, readCredential, fetchClaudeUsage, } from "./claude-store.js";
+import { createProfile, listProfiles, findProfile, removeProfile, getActiveProfile, setActiveProfile, getInstancePath, detectClaudeCli, getAuthStatusAsync, getAuthStatusForPath, validateProfileName, createTempInstance, registerProfile, cleanupInstance, readCredential, fetchClaudeUsage, ensureFreshClaudeCredential, ClaudeUsageError, readClaudeUsageCache, writeClaudeUsageCache, } from "./claude-store.js";
 import { displayClaudeProfiles, displayClaudeProfilesNumbered } from "./display.js";
 import { questionOrEscape } from "./interactive.js";
 const HELP = `aa claude - Manage multiple Claude Code profiles
@@ -39,13 +39,49 @@ async function fetchInfos() {
     // Phase 2: fetch usage for all profiles with valid tokens in parallel
     const infos = await Promise.all(withCreds.map(async ({ profile: p, auth, credential, error }) => {
         let usage = null;
+        let usageError;
+        let usageCachedAt;
         if (credential?.accessToken && !error) {
+            const cached = readClaudeUsageCache(p.name);
             try {
-                usage = await fetchClaudeUsage(credential.accessToken);
+                credential = await ensureFreshClaudeCredential(getInstancePath(p.name), credential);
+                const retryAfterAt = cached?.retryAfterAt ? new Date(cached.retryAfterAt).getTime() : 0;
+                if (retryAfterAt > Date.now()) {
+                    usage = cached?.usage ?? null;
+                    usageCachedAt = cached?.fetchedAt;
+                    usageError = `usage rate limited; retry in ${Math.max(1, Math.ceil((retryAfterAt - Date.now()) / 60000))}m`;
+                }
+                else {
+                    usage = await fetchClaudeUsage(credential.accessToken);
+                    usageCachedAt = new Date().toISOString();
+                    writeClaudeUsageCache(p.name, { usage, fetchedAt: usageCachedAt });
+                }
             }
-            catch { /* ignore */ }
+            catch (usageErr) {
+                usage = cached?.usage ?? null;
+                usageCachedAt = cached?.fetchedAt;
+                if (usageErr instanceof ClaudeUsageError && usageErr.status === 429) {
+                    const seconds = usageErr.retryAfterSeconds ?? 300;
+                    const retryAfterAt = new Date(Date.now() + seconds * 1000).toISOString();
+                    writeClaudeUsageCache(p.name, { usage: cached?.usage, fetchedAt: cached?.fetchedAt, retryAfterAt });
+                    usageError = `usage rate limited; retry in ${Math.max(1, Math.ceil(seconds / 60))}m`;
+                }
+                else {
+                    usageError = usageErr.message;
+                }
+            }
         }
-        return { name: p.name, isActive: p.name === active, createdAt: p.createdAt, auth, credential, usage, error };
+        return {
+            name: p.name,
+            isActive: p.name === active,
+            createdAt: p.createdAt,
+            auth,
+            credential,
+            usage,
+            usageError,
+            usageCachedAt,
+            error,
+        };
     }));
     return infos;
 }

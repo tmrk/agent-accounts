@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync, renameSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { homedir, userInfo } from "node:os";
@@ -6,8 +6,19 @@ import { execFile, execSync } from "node:child_process";
 import { ensureStoreDir, STORE_DIR } from "./paths.js";
 const USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
 const OAUTH_BETA_HEADER = "oauth-2025-04-20";
+const OAUTH_TOKEN_URL = "https://platform.claude.com/v1/oauth/token";
+const OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
+const DEFAULT_OAUTH_SCOPES = [
+    "user:profile",
+    "user:inference",
+    "user:sessions:claude_code",
+    "user:mcp_servers",
+    "user:file_upload",
+];
+const REFRESH_EARLY_MS = 5 * 60 * 1000;
 const PROFILES_PATH = join(STORE_DIR, "claude.json");
 const INSTANCES_DIR = join(STORE_DIR, "claude");
+const USAGE_CACHE_DIR = join(STORE_DIR, "claude-usage-cache");
 const RESERVED_NAMES = new Set(["add", "login", "list", "ls", "switch", "use", "remove", "rm", "env", "status", "run", "help"]);
 function sanitizeName(name) {
     return name.replace(/[^a-zA-Z0-9_-]/g, "-").toLowerCase();
@@ -24,6 +35,28 @@ function readProfiles() {
 function writeProfiles(data) {
     ensureStoreDir();
     writeFileSync(PROFILES_PATH, JSON.stringify(data, null, 2), { mode: 0o600 });
+}
+function safeFilename(value) {
+    return value.replace(/[^a-zA-Z0-9._-]/g, "_");
+}
+function usageCachePath(profileName) {
+    return join(USAGE_CACHE_DIR, `${safeFilename(profileName)}.json`);
+}
+export function readClaudeUsageCache(profileName) {
+    try {
+        return JSON.parse(readFileSync(usageCachePath(profileName), "utf-8"));
+    }
+    catch {
+        return null;
+    }
+}
+export function writeClaudeUsageCache(profileName, entry) {
+    ensureStoreDir();
+    mkdirSync(USAGE_CACHE_DIR, { recursive: true, mode: 0o700 });
+    const path = usageCachePath(profileName);
+    const temp = `${path}.tmp-${process.pid}`;
+    writeFileSync(temp, JSON.stringify(entry, null, 2), { mode: 0o600 });
+    renameSync(temp, path);
 }
 export function validateProfileName(name) {
     if (!name)
@@ -199,9 +232,13 @@ export function readCredential(instancePath) {
             if (oauth) {
                 return Promise.resolve({
                     accessToken: oauth.accessToken,
+                    refreshToken: oauth.refreshToken,
                     subscriptionType: oauth.subscriptionType,
                     rateLimitTier: oauth.rateLimitTier,
                     expiresAt: oauth.expiresAt,
+                    refreshTokenExpiresAt: oauth.refreshTokenExpiresAt,
+                    scopes: Array.isArray(oauth.scopes) ? oauth.scopes : undefined,
+                    clientId: oauth.clientId,
                 });
             }
         }
@@ -228,9 +265,13 @@ export function readCredential(instancePath) {
                 if (oauth) {
                     resolve({
                         accessToken: oauth.accessToken,
+                        refreshToken: oauth.refreshToken,
                         subscriptionType: oauth.subscriptionType,
                         rateLimitTier: oauth.rateLimitTier,
                         expiresAt: oauth.expiresAt,
+                        refreshTokenExpiresAt: oauth.refreshTokenExpiresAt,
+                        scopes: Array.isArray(oauth.scopes) ? oauth.scopes : undefined,
+                        clientId: oauth.clientId,
                     });
                     return;
                 }
@@ -240,10 +281,120 @@ export function readCredential(instancePath) {
         });
     });
 }
+async function readCredentialPayload(instancePath) {
+    const credPath = join(instancePath, ".credentials.json");
+    if (existsSync(credPath)) {
+        return JSON.parse(readFileSync(credPath, "utf-8"));
+    }
+    if (process.platform !== "darwin")
+        return {};
+    const service = `Claude Code-credentials-${keychainHash(instancePath)}`;
+    const account = userInfo().username;
+    return new Promise((resolve, reject) => {
+        execFile("security", ["find-generic-password", "-s", service, "-a", account, "-w"], {
+            encoding: "utf-8",
+            timeout: 5000,
+        }, (error, stdout) => {
+            if (error || !stdout?.trim()) {
+                reject(error ?? new Error("Claude credential not found"));
+                return;
+            }
+            try {
+                resolve(JSON.parse(stdout.trim()));
+            }
+            catch (parseError) {
+                reject(parseError);
+            }
+        });
+    });
+}
+async function writeCredentialPayload(instancePath, payload) {
+    const serialized = JSON.stringify(payload, null, 2);
+    const credPath = join(instancePath, ".credentials.json");
+    if (existsSync(credPath) || process.platform !== "darwin") {
+        const temp = `${credPath}.tmp-${process.pid}`;
+        writeFileSync(temp, serialized, { mode: 0o600 });
+        renameSync(temp, credPath);
+        return;
+    }
+    const service = `Claude Code-credentials-${keychainHash(instancePath)}`;
+    const account = userInfo().username;
+    await new Promise((resolve, reject) => {
+        execFile("security", ["add-generic-password", "-U", "-s", service, "-a", account, "-w", serialized], {
+            encoding: "utf-8",
+            timeout: 5000,
+        }, (error) => error ? reject(error) : resolve());
+    });
+}
+/** Refresh an expiring Claude OAuth credential and persist any rotated tokens. */
+export async function ensureFreshClaudeCredential(instancePath, credential, fetchImpl = fetch) {
+    if (credential.expiresAt && credential.expiresAt > Date.now() + REFRESH_EARLY_MS)
+        return credential;
+    // A concurrent Claude process may already have refreshed the file.
+    const latest = await readCredential(instancePath);
+    if (latest?.expiresAt && latest.expiresAt > Date.now() + REFRESH_EARLY_MS)
+        return latest;
+    const current = latest ?? credential;
+    if (!current.refreshToken)
+        throw new Error("Claude OAuth token expired and no refresh token is available; run 'aa claude run' and /login");
+    if (current.refreshTokenExpiresAt && current.refreshTokenExpiresAt <= Date.now()) {
+        throw new Error("Claude OAuth refresh token expired; run 'aa claude run' and /login");
+    }
+    const scopes = current.scopes?.length ? current.scopes : DEFAULT_OAUTH_SCOPES;
+    const res = await fetchImpl(OAUTH_TOKEN_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            grant_type: "refresh_token",
+            refresh_token: current.refreshToken,
+            client_id: current.clientId ?? OAUTH_CLIENT_ID,
+            scope: scopes.join(" "),
+        }),
+        signal: AbortSignal.timeout(30000),
+    });
+    if (!res.ok) {
+        // If another process won a refresh-token rotation race, prefer its newer file.
+        const concurrent = await readCredential(instancePath);
+        if (concurrent?.expiresAt && concurrent.expiresAt > Date.now() + REFRESH_EARLY_MS)
+            return concurrent;
+        throw new Error(`Claude OAuth refresh failed (${res.status} ${res.statusText})`);
+    }
+    const token = await res.json();
+    if (!token.access_token || typeof token.expires_in !== "number") {
+        throw new Error("Claude OAuth refresh returned an incomplete token response");
+    }
+    const refreshed = {
+        ...current,
+        accessToken: token.access_token,
+        refreshToken: token.refresh_token ?? current.refreshToken,
+        expiresAt: Date.now() + token.expires_in * 1000,
+        refreshTokenExpiresAt: typeof token.refresh_token_expires_in === "number"
+            ? Date.now() + token.refresh_token_expires_in * 1000
+            : current.refreshTokenExpiresAt,
+        scopes: token.scope ? token.scope.split(" ").filter(Boolean) : scopes,
+    };
+    const payload = await readCredentialPayload(instancePath);
+    const existingOauth = payload.claudeAiOauth && typeof payload.claudeAiOauth === "object"
+        ? payload.claudeAiOauth
+        : {};
+    payload.claudeAiOauth = { ...existingOauth, ...refreshed };
+    await writeCredentialPayload(instancePath, payload);
+    return refreshed;
+}
+export class ClaudeUsageError extends Error {
+    status;
+    retryAfterSeconds;
+    constructor(message, status, retryAfterSeconds) {
+        super(message);
+        this.status = status;
+        this.retryAfterSeconds = retryAfterSeconds;
+        this.name = "ClaudeUsageError";
+    }
+}
 /** Fetch rate limit utilization from /api/oauth/usage */
-export async function fetchClaudeUsage(accessToken) {
+export async function fetchClaudeUsage(accessToken, fetchImpl = fetch) {
     try {
-        const res = await fetch(USAGE_URL, {
+        const res = await fetchImpl(USAGE_URL, {
             headers: {
                 "Authorization": `Bearer ${accessToken}`,
                 "anthropic-beta": OAUTH_BETA_HEADER,
@@ -251,12 +402,20 @@ export async function fetchClaudeUsage(accessToken) {
             },
             signal: AbortSignal.timeout(10000),
         });
-        if (!res.ok)
-            return null;
-        return (await res.json());
+        if (!res.ok) {
+            const retryAfter = Number.parseInt(res.headers.get("retry-after") ?? "", 10);
+            throw new ClaudeUsageError(`Claude usage request failed (${res.status} ${res.statusText})`, res.status, Number.isFinite(retryAfter) ? retryAfter : undefined);
+        }
+        const body = await res.json();
+        if (!body || typeof body !== "object" || Array.isArray(body)) {
+            throw new ClaudeUsageError("Claude usage request returned an invalid response");
+        }
+        return body;
     }
-    catch {
-        return null;
+    catch (error) {
+        if (error instanceof ClaudeUsageError)
+            throw error;
+        throw new ClaudeUsageError(`Claude usage request failed: ${error.message}`);
     }
 }
 /** Copy MCP server config from global ~/.claude.json into the instance */

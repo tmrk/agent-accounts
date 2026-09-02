@@ -205,9 +205,13 @@ export interface ClaudeAuthStatus {
 /** Credential info read from macOS Keychain or .credentials.json */
 export interface ClaudeCredentialInfo {
     accessToken?: string;
+    refreshToken?: string;
     subscriptionType?: string;
     rateLimitTier?: string;
     expiresAt?: number;
+    refreshTokenExpiresAt?: number;
+    scopes?: string[];
+    clientId?: string;
 }
 /** A single rate limit window from /api/oauth/usage */
 export interface ClaudeRateLimit {
@@ -221,6 +225,20 @@ export interface ClaudeExtraUsage {
     used_credits: number | null;
     utilization: number | null;
 }
+/** Newer Claude usage APIs also return a generic list of rate-limit buckets. */
+export interface ClaudeUsageLimit {
+    kind: string;
+    group?: string | null;
+    percent: number | null;
+    resets_at?: string | number | null;
+    is_active?: boolean;
+    scope?: {
+        model?: {
+            id?: string | null;
+            display_name?: string | null;
+        } | null;
+    } | null;
+}
 /** Full response from /api/oauth/usage */
 export interface ClaudeUsageResponse {
     five_hour?: ClaudeRateLimit | null;
@@ -229,6 +247,7 @@ export interface ClaudeUsageResponse {
     seven_day_sonnet?: ClaudeRateLimit | null;
     seven_day_oauth_apps?: ClaudeRateLimit | null;
     extra_usage?: ClaudeExtraUsage | null;
+    limits?: ClaudeUsageLimit[] | null;
 }
 /** Claude profile info for display */
 export interface ClaudeProfileInfo {
@@ -238,6 +257,8 @@ export interface ClaudeProfileInfo {
     auth: ClaudeAuthStatus | null;
     credential?: ClaudeCredentialInfo | null;
     usage?: ClaudeUsageResponse | null;
+    usageError?: string;
+    usageCachedAt?: string;
     error?: string;
 }
 /** Grok Build profile metadata stored by agent-accounts. */
