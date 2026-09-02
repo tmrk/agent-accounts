@@ -40,6 +40,12 @@ aa grok                           # usage + interactive Grok switcher
 
 The original flat Codex commands remain aliases, so `aa add`, `aa switch`, and `aa usage` work too.
 
+The status view is a responsive terminal dashboard: each provider gets a compact section, account
+state and plan are grouped in the header, and quota bars represent the percentage remaining. The
+layout adapts from narrow SSH sessions to wide terminals without dropping long identities, errors,
+or recommendation details. Color is used in interactive terminals and omitted automatically when
+output is redirected; set `NO_COLOR=1` to disable it explicitly.
+
 Live mode fetches fresh subscription usage on every refresh and redraws the terminal, so the
 remaining percentages fall as the coding agents consume their limits. It is opt-in and can also
 be scoped to one provider with `aa codex --live`, `aa claude --live`, or `aa grok --live`.

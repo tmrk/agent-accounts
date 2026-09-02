@@ -809,11 +809,8 @@ async function codexMain(args) {
     }
 }
 async function cmdAllStatus() {
-    console.log("\n\x1b[1mCodex\x1b[0m");
     await cmdStatus();
-    console.log("\x1b[1mClaude Code\x1b[0m");
     await claudeStatus();
-    console.log("\x1b[1mGrok Build\x1b[0m");
     await grokStatus();
 }
 async function cmdLiveStatus(args, intervalSeconds) {
