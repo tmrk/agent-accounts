@@ -8,9 +8,9 @@ import { readActiveAuth, writeActiveAuth, readAuthFromHome, listAccounts, saveAc
 import { extractEmail } from "./jwt.js";
 import { refreshIfExpired } from "./token-refresh.js";
 import { loadAccountUsage } from "./usage.js";
-import { displayAllUsage, displayAllUsageNumbered, displayAccountList } from "./display.js";
-import { claudeMain, claudeStatus } from "./claude.js";
-import { grokMain, grokStatus } from "./grok.js";
+import { displayAllUsage, displayAllUsageNumbered, displayAccountList, displayClaudeProfiles, displayGrokProfiles, renderClaudeProfiles, renderCodexUsage, renderCombinedUsage, renderGrokProfiles, } from "./display.js";
+import { activateClaudeProfile, claudeMain, loadClaudeProfiles } from "./claude.js";
+import { activateGrokProfile, grokMain, loadGrokProfiles } from "./grok.js";
 import { validateAdminKey, listProjects, fetchUsageRollup } from "./openai-admin.js";
 import { rankUsagesForGto } from "./gto.js";
 import { restartCodexGui } from "./codex-gui.js";
@@ -18,14 +18,15 @@ import { parseSwitchArgs } from "./switch-options.js";
 import { parseAddArgs } from "./add-options.js";
 import { runCodexLogin } from "./codex-login.js";
 import { questionOrEscape } from "./interactive.js";
-import { parseLiveArgs, runLive } from "./live.js";
+import { alreadyActiveOutcome, parseLiveArgs, runLive } from "./live.js";
 const USAGE_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 const HELP = `agent-accounts (aa) - Manage Codex, Claude Code, and Grok Build accounts
 
 Usage:
   aa                         Show usage across all providers
   aa status                  Show usage across all providers
-  aa status --live           Refresh usage in place every 30 seconds
+  aa --live                  Live dashboard (resize, no-flash refresh, number switch)
+  aa status --live           Same dashboard
   aa status --live --interval 10
   aa codex [command]         Manage Codex accounts
   aa claude [command]        Manage Claude Code accounts
@@ -544,29 +545,29 @@ async function promptSwitch(options = { restartCodexGui: false }) {
     }
     return cmdSwitch(accounts[idx].email, options);
 }
-async function cmdSwitch(email, options = { restartCodexGui: false }) {
+function resolveCodexAccount(email) {
     const account = findAccount(email);
-    if (!account) {
-        // Try partial match
-        const all = listAccounts();
-        const matches = all.filter(a => a.email.toLowerCase().includes(email.toLowerCase()));
-        if (matches.length === 0) {
-            console.error(`No account found matching "${email}".`);
-            console.error("Run 'agent-accounts list' to see all accounts.");
-            process.exit(1);
-        }
-        if (matches.length > 1) {
-            console.error(`Multiple accounts match "${email}":`);
-            for (const m of matches) {
-                console.error(`  ${m.email}`);
-            }
-            process.exit(1);
-        }
-        return cmdSwitch(matches[0].email, options);
+    if (account)
+        return account;
+    const matches = listAccounts().filter(a => a.email.toLowerCase().includes(email.toLowerCase()));
+    if (matches.length === 0) {
+        throw new Error(`No account found matching "${email}".`);
     }
-    // Save current active auth before switching
+    if (matches.length > 1) {
+        throw new Error(`Multiple accounts match "${email}":\n${matches.map(m => `  ${m.email}`).join("\n")}`);
+    }
+    return matches[0];
+}
+function formatCodexLabel(email) {
+    return email.startsWith("apikey:") ? `${email.slice(7)} (API key)` : email;
+}
+export async function activateCodexAccount(email, options = { restartCodexGui: false }) {
+    const account = resolveCodexAccount(email);
+    const label = formatCodexLabel(account.email);
+    if (detectActiveAccount() === account.email) {
+        return alreadyActiveOutcome(label);
+    }
     syncActiveToStore();
-    // Refresh tokens if needed
     try {
         const { auth, refreshed } = await refreshIfExpired(account.auth);
         if (refreshed) {
@@ -576,17 +577,38 @@ async function cmdSwitch(email, options = { restartCodexGui: false }) {
         writeActiveAuth(auth);
     }
     catch (err) {
-        // Write anyway even if refresh fails
         writeActiveAuth(account.auth);
         console.warn(`Warning: token refresh failed, using cached tokens: ${err.message}`);
     }
-    console.log(`Switched to ${account.email}`);
     if (options.restartCodexGui) {
         await reportCodexGuiRestart();
+        return { status: "switched", label };
     }
-    else {
+    return {
+        status: "switched",
+        label,
+        hint: "restart running Codex sessions",
+    };
+}
+async function cmdSwitch(email, options = { restartCodexGui: false }) {
+    let result;
+    try {
+        result = await activateCodexAccount(email, options);
+    }
+    catch (err) {
+        console.error(err.message);
+        if (/No account found/.test(err.message)) {
+            console.error("Run 'agent-accounts list' to see all accounts.");
+        }
+        process.exit(1);
+    }
+    if (result.status !== "switched") {
+        console.log(`Already using ${result.label}`);
+        return;
+    }
+    console.log(`Switched to ${result.label}`);
+    if (result.hint)
         console.log("Restart any running Codex sessions to use the new account.");
-    }
 }
 async function reportCodexGuiRestart() {
     try {
@@ -631,45 +653,38 @@ async function cmdRemove(email) {
     removeAccount(email);
     console.log(`Removed account: ${email}`);
 }
-async function cmdStatus() {
+export async function loadCodexUsages() {
     autoImportIfEmpty();
     const accounts = listAccounts();
-    if (accounts.length === 0) {
+    if (accounts.length === 0)
+        return [];
+    const activeEmail = detectActiveAccount();
+    const oauthAccounts = accounts.filter(a => a.auth.auth_mode !== "apikey");
+    const apiKeyAccounts = accounts.filter(a => a.auth.auth_mode === "apikey");
+    const oauthUsages = await Promise.all(oauthAccounts.map(account => loadAccountUsage(account.email, account.auth, account.email === activeEmail)));
+    const adminKeys = listAdminKeys();
+    const apiKeyUsages = apiKeyAccounts.map(account => apiKeyUsageFromCache(account, account.email === activeEmail, adminKeys));
+    const usageByEmail = new Map([...oauthUsages, ...apiKeyUsages].map(u => [u.email, u]));
+    const usages = rankUsagesForGto(accounts.map(a => usageByEmail.get(a.email)));
+    maybeSpawnBackgroundRefresh();
+    return usages;
+}
+async function cmdStatus() {
+    const usages = await loadCodexUsages();
+    if (usages.length === 0) {
         console.log("No accounts configured. Run 'agent-accounts add' to add one.");
         return;
     }
-    const activeEmail = detectActiveAccount();
-    // Split into OAuth and API key accounts
-    const oauthAccounts = accounts.filter(a => a.auth.auth_mode !== "apikey");
-    const apiKeyAccounts = accounts.filter(a => a.auth.auth_mode === "apikey");
-    const oauthUsages = await Promise.all(oauthAccounts.map(account => loadAccountUsage(account.email, account.auth, account.email === activeEmail)));
-    // API key accounts: pull cached spend if any
-    const adminKeys = listAdminKeys();
-    const apiKeyUsages = apiKeyAccounts.map(account => apiKeyUsageFromCache(account, account.email === activeEmail, adminKeys));
-    const usageByEmail = new Map([...oauthUsages, ...apiKeyUsages].map(u => [u.email, u]));
-    const usages = rankUsagesForGto(accounts.map(a => usageByEmail.get(a.email)));
     displayAllUsage(usages);
-    maybeSpawnBackgroundRefresh();
 }
 /** Default interactive mode: show all usage, prompt to switch */
 async function cmdDefault(options = { restartCodexGui: false }) {
-    autoImportIfEmpty();
-    const accounts = listAccounts();
-    if (accounts.length === 0) {
+    const usages = await loadCodexUsages();
+    if (usages.length === 0) {
         console.log("No accounts configured. Run 'aa add' to add one.");
         return;
     }
-    const activeEmail = detectActiveAccount();
-    const oauthAccounts = accounts.filter(a => a.auth.auth_mode !== "apikey");
-    const apiKeyAccounts = accounts.filter(a => a.auth.auth_mode === "apikey");
-    const oauthUsages = await Promise.all(oauthAccounts.map(account => loadAccountUsage(account.email, account.auth, account.email === activeEmail)));
-    const adminKeys = listAdminKeys();
-    const apiKeyUsages = apiKeyAccounts.map(account => apiKeyUsageFromCache(account, account.email === activeEmail, adminKeys));
-    const usageByEmail = new Map([...oauthUsages, ...apiKeyUsages].map(u => [u.email, u]));
-    const usages = rankUsagesForGto(accounts.map(a => usageByEmail.get(a.email)));
     displayAllUsageNumbered(usages);
-    maybeSpawnBackgroundRefresh();
-    // Prompt to switch
     const answer = await questionOrEscape("Switch to (#, Esc to cancel): ");
     if (answer === undefined)
         return;
@@ -680,7 +695,6 @@ async function cmdDefault(options = { restartCodexGui: false }) {
     if (idx >= 0 && idx < usages.length) {
         return cmdSwitch(usages[idx].email, options);
     }
-    // Try as email/partial match
     if (trimmed) {
         return cmdSwitch(trimmed, options);
     }
@@ -808,29 +822,132 @@ async function codexMain(args) {
             }
     }
 }
+export async function loadAllUsage() {
+    const [codex, claude, grok] = await Promise.all([
+        loadCodexUsages(),
+        loadClaudeProfiles(),
+        loadGrokProfiles(),
+    ]);
+    return { codex, claude, grok };
+}
 async function cmdAllStatus() {
-    await cmdStatus();
-    await claudeStatus();
-    await grokStatus();
+    const data = await loadAllUsage();
+    if (data.codex.length === 0) {
+        console.log("No accounts configured. Run 'agent-accounts add' to add one.");
+    }
+    else {
+        displayAllUsage(data.codex);
+    }
+    displayClaudeProfiles(data.claude);
+    displayGrokProfiles(data.grok);
+}
+function combinedSwitchables(data) {
+    const items = [];
+    let index = 1;
+    for (const usage of data.codex) {
+        items.push({
+            index: index++,
+            provider: "codex",
+            id: usage.email,
+            label: formatCodexLabel(usage.email),
+            active: usage.isActive,
+        });
+    }
+    for (const profile of data.claude) {
+        items.push({
+            index: index++,
+            provider: "claude",
+            id: profile.name,
+            label: profile.name,
+            active: profile.isActive,
+        });
+    }
+    for (const profile of data.grok) {
+        items.push({
+            index: index++,
+            provider: "grok",
+            id: profile.name,
+            label: profile.name,
+            active: profile.isActive,
+        });
+    }
+    return items;
+}
+async function selectCombinedAccount(account) {
+    if (account.provider === "codex")
+        return activateCodexAccount(account.id);
+    if (account.provider === "claude")
+        return activateClaudeProfile(account.id);
+    return activateGrokProfile(account.id);
 }
 async function cmdLiveStatus(args, intervalSeconds) {
-    let render;
-    if (args.length === 0 || (args.length === 1 && args[0] === "status")) {
-        render = cmdAllStatus;
+    const all = args.length === 0 || (args.length === 1 && args[0] === "status");
+    const codex = args[0] === "codex" && (args.length === 1 || (args.length === 2 && args[1] === "status"));
+    const claude = args[0] === "claude" && (args.length === 1 || (args.length === 2 && args[1] === "status"));
+    const grok = args[0] === "grok" && (args.length === 1 || (args.length === 2 && args[1] === "status"));
+    if (all) {
+        await runLive({
+            intervalSeconds,
+            title: "Agent accounts",
+            load: loadAllUsage,
+            render: (data, width) => renderCombinedUsage(data, { width, numbered: true, tight: true }),
+            accounts: combinedSwitchables,
+            onSelect: selectCombinedAccount,
+        });
+        return;
     }
-    else if (args[0] === "codex" && (args.length === 1 || (args.length === 2 && args[1] === "status"))) {
-        render = cmdStatus;
+    if (codex) {
+        await runLive({
+            intervalSeconds,
+            title: "Codex",
+            load: loadCodexUsages,
+            render: (data, width) => renderCodexUsage(data, { width, numbered: true, tight: true }),
+            accounts: data => data.map((usage, i) => ({
+                index: i + 1,
+                provider: "codex",
+                id: usage.email,
+                label: formatCodexLabel(usage.email),
+                active: usage.isActive,
+            })),
+            onSelect: account => activateCodexAccount(account.id),
+        });
+        return;
     }
-    else if (args[0] === "claude" && (args.length === 1 || (args.length === 2 && args[1] === "status"))) {
-        render = claudeStatus;
+    if (claude) {
+        await runLive({
+            intervalSeconds,
+            title: "Claude Code",
+            load: loadClaudeProfiles,
+            render: (data, width) => renderClaudeProfiles(data, { width, numbered: true, tight: true }),
+            accounts: data => data.map((profile, i) => ({
+                index: i + 1,
+                provider: "claude",
+                id: profile.name,
+                label: profile.name,
+                active: profile.isActive,
+            })),
+            onSelect: account => activateClaudeProfile(account.id),
+        });
+        return;
     }
-    else if (args[0] === "grok" && (args.length === 1 || (args.length === 2 && args[1] === "status"))) {
-        render = grokStatus;
+    if (grok) {
+        await runLive({
+            intervalSeconds,
+            title: "Grok Build",
+            load: loadGrokProfiles,
+            render: (data, width) => renderGrokProfiles(data, { width, numbered: true, tight: true }),
+            accounts: data => data.map((profile, i) => ({
+                index: i + 1,
+                provider: "grok",
+                id: profile.name,
+                label: profile.name,
+                active: profile.isActive,
+            })),
+            onSelect: account => activateGrokProfile(account.id),
+        });
+        return;
     }
-    if (!render) {
-        throw new Error("--live is supported by status views: aa status, aa codex status, aa claude status, or aa grok status.");
-    }
-    await runLive(render, intervalSeconds);
+    throw new Error("--live is supported by status views: aa status, aa codex status, aa claude status, or aa grok status.");
 }
 async function main() {
     const parsed = parseLiveArgs(process.argv.slice(2));

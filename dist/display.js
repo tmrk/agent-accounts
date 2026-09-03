@@ -1,3 +1,4 @@
+import { dashboardWidth, padVisible, truncateVisible, visibleLength, } from "./term.js";
 const COLOR_ENABLED = Boolean(process.stdout.isTTY) && process.env.NO_COLOR === undefined;
 const ansi = (code) => COLOR_ENABLED ? code : "";
 const RESET = ansi("\x1b[0m");
@@ -8,21 +9,11 @@ const YELLOW = ansi("\x1b[33m");
 const RED = ansi("\x1b[31m");
 const CYAN = ansi("\x1b[36m");
 const WHITE = ansi("\x1b[37m");
-const ANSI_PATTERN = /\x1b\[[0-9;]*m/g;
-const MIN_DASHBOARD_WIDTH = 40;
-const MAX_DASHBOARD_WIDTH = 112;
-const DEFAULT_DASHBOARD_WIDTH = 88;
-function visibleLength(value) {
-    return value.replace(ANSI_PATTERN, "").length;
+function resolveWidth(options) {
+    return options?.width ?? dashboardWidth();
 }
-function terminalWidth() {
-    const envColumns = Number(process.env.COLUMNS);
-    const columns = process.stdout.columns
-        ?? (Number.isFinite(envColumns) && envColumns > 0 ? envColumns : DEFAULT_DASHBOARD_WIDTH);
-    return Math.max(MIN_DASHBOARD_WIDTH, Math.min(MAX_DASHBOARD_WIDTH, columns));
-}
-function labelWidthCap() {
-    return Math.max(8, Math.min(22, terminalWidth() - 28));
+function labelWidthCap(width) {
+    return Math.max(8, Math.min(22, width - 28));
 }
 function plural(count, noun) {
     return `${count} ${noun}${count === 1 ? "" : "s"}`;
@@ -32,6 +23,8 @@ function wrapText(value, width) {
     let remaining = value.trim();
     if (!remaining)
         return [""];
+    if (width <= 0)
+        return ["…"];
     while (remaining.length > width) {
         const candidate = remaining.slice(0, width + 1);
         const wordBreak = candidate.lastIndexOf(" ");
@@ -39,29 +32,37 @@ function wrapText(value, width) {
         lines.push(remaining.slice(0, splitAt).trimEnd());
         remaining = remaining.slice(splitAt).trimStart();
     }
-    lines.push(remaining);
-    return lines;
+    if (remaining)
+        lines.push(remaining);
+    return lines.length ? lines : [""];
 }
-function fitContent(value, width) {
-    const length = visibleLength(value);
-    return length < width ? `${value}${" ".repeat(width - length)}` : value;
-}
-function printContent(value = "") {
-    const width = terminalWidth() - 4;
-    console.log(`│ ${fitContent(value, width)} │`);
-}
-function printSectionStart(title, count, noun) {
-    const width = terminalWidth();
-    const left = `╭─ ${title.toUpperCase()} `;
-    const right = ` ${plural(count, noun)} ─╮`;
-    const fill = "─".repeat(Math.max(1, width - left.length - right.length));
-    console.log(`\n${BOLD}${left}${fill}${right}${RESET}`);
-}
-function printDivider() {
-    console.log(`├${"─".repeat(terminalWidth() - 2)}┤`);
-}
-function printSectionEnd() {
-    console.log(`╰${"─".repeat(terminalWidth() - 2)}╯`);
+class Frame {
+    width;
+    lines = [];
+    constructor(width) {
+        this.width = Math.max(8, width);
+    }
+    push(line = "") {
+        this.lines.push(line);
+    }
+    content(value = "") {
+        const inner = this.width - 4;
+        this.push(`│ ${padVisible(value, inner)} │`);
+    }
+    sectionStart(title, count, noun, tight) {
+        if (!tight)
+            this.push("");
+        const left = `╭─ ${title.toUpperCase()} `;
+        const right = ` ${plural(count, noun)} ─╮`;
+        const fill = "─".repeat(Math.max(1, this.width - visibleLength(left) - visibleLength(right)));
+        this.push(`${BOLD}${padVisible(`${left}${fill}${right}`, this.width)}${RESET}`);
+    }
+    divider() {
+        this.push(`├${"─".repeat(Math.max(1, this.width - 2))}┤`);
+    }
+    sectionEnd() {
+        this.push(`╰${"─".repeat(Math.max(1, this.width - 2))}╯`);
+    }
 }
 function statusColor(remainingPercent) {
     if (remainingPercent <= 10)
@@ -73,15 +74,16 @@ function statusColor(remainingPercent) {
 /** Render a quota bar whose filled portion represents quota remaining. */
 function renderBar(usedPercent, width) {
     const remaining = Math.max(0, Math.min(100, 100 - usedPercent));
-    const filled = Math.round((remaining / 100) * width);
-    return `${statusColor(remaining)}${"█".repeat(filled)}${DIM}${"░".repeat(width - filled)}${RESET}`;
+    const filled = Math.round((remaining / 100) * Math.max(0, width));
+    const empty = Math.max(0, width - filled);
+    return `${statusColor(remaining)}${"█".repeat(filled)}${DIM}${"░".repeat(empty)}${RESET}`;
 }
-function printQuota(row, labelWidth) {
-    const contentWidth = terminalWidth() - 4;
+function printQuota(frame, row, labelWidth) {
+    const contentWidth = frame.width - 4;
     const remaining = Math.max(0, 100 - row.usedPercent);
     let displayLabel = row.label;
     if (displayLabel.length > labelWidth) {
-        printDetail("Limit", displayLabel, labelWidth);
+        printDetail(frame, "Limit", displayLabel, labelWidth);
         displayLabel = "Usage";
     }
     const prefix = `  ${displayLabel.padEnd(labelWidth)} `;
@@ -95,33 +97,33 @@ function printQuota(row, labelWidth) {
         barWidth = contentWidth - prefix.length - percent.length - 2;
     }
     barWidth = Math.max(3, barWidth);
-    printContent(`${DIM}${prefix}${RESET}${renderBar(row.usedPercent, barWidth)}  ${statusColor(remaining)}${percent}${RESET}${DIM}${reset}${RESET}`);
+    frame.content(`${DIM}${prefix}${RESET}${renderBar(row.usedPercent, barWidth)}  ${statusColor(remaining)}${percent}${RESET}${DIM}${reset}${RESET}`);
     if (wrappedReset)
-        printContent(`${DIM}${" ".repeat(prefix.length)}↻ resets in ${wrappedReset}${RESET}`);
+        frame.content(`${DIM}${" ".repeat(prefix.length)}↻ resets in ${wrappedReset}${RESET}`);
 }
-function printDetail(label, value, labelWidth) {
-    const contentWidth = terminalWidth() - 4;
+function printDetail(frame, label, value, labelWidth) {
+    const contentWidth = frame.width - 4;
     const prefix = `  ${label.padEnd(labelWidth)} `;
     const available = Math.max(1, contentWidth - prefix.length);
     const lines = wrapText(value, available);
     for (let i = 0; i < lines.length; i++) {
         const linePrefix = i === 0 ? prefix : " ".repeat(prefix.length);
-        printContent(`${DIM}${linePrefix}${RESET}${lines[i]}`);
+        frame.content(`${DIM}${linePrefix}${RESET}${lines[i]}`);
     }
 }
-function printNote(value) {
-    const available = terminalWidth() - 8;
+function printNote(frame, value) {
+    const available = Math.max(1, frame.width - 8);
     for (const line of wrapText(value, available))
-        printContent(`${DIM}  ${line}${RESET}`);
+        frame.content(`${DIM}  ${line}${RESET}`);
 }
-function printError(value) {
-    const available = terminalWidth() - 10;
+function printError(frame, value) {
+    const available = Math.max(1, frame.width - 10);
     const lines = wrapText(value, available);
     for (let i = 0; i < lines.length; i++) {
-        printContent(i === 0 ? `  ${RED}Error${RESET}  ${lines[i]}` : `         ${lines[i]}`);
+        frame.content(i === 0 ? `  ${RED}Error${RESET}  ${lines[i]}` : `         ${lines[i]}`);
     }
 }
-function printAccountHeader(name, options) {
+function printAccountHeader(frame, name, options) {
     const marker = options.index === undefined ? "●" : `${options.index}.`;
     const tags = [];
     if (options.plan)
@@ -134,19 +136,19 @@ function printAccountHeader(name, options) {
     const styledTags = tagText
         .replace("NEXT", `${GREEN}NEXT${RESET}${BOLD}`)
         .replace("ACTIVE", `${CYAN}ACTIVE${RESET}${BOLD}`);
-    const contentWidth = terminalWidth() - 4;
-    if (marker.length + name.length + tagText.length + 1 <= contentWidth) {
-        printContent(`${BOLD}${WHITE}${marker} ${name}${styledTags}${RESET}`);
+    const contentWidth = frame.width - 4;
+    if (visibleLength(`${marker} ${name}${tagText}`) <= contentWidth) {
+        frame.content(`${BOLD}${WHITE}${marker} ${name}${styledTags}${RESET}`);
         return;
     }
     const nameWidth = Math.max(8, contentWidth - marker.length - 1);
     const nameLines = wrapText(name, nameWidth);
     for (let i = 0; i < nameLines.length; i++) {
         const lineMarker = i === 0 ? `${marker} ` : " ".repeat(marker.length + 1);
-        printContent(`${BOLD}${WHITE}${lineMarker}${nameLines[i]}${RESET}`);
+        frame.content(`${BOLD}${WHITE}${lineMarker}${nameLines[i]}${RESET}`);
     }
     if (tagText)
-        printContent(`${BOLD}${styledTags}${RESET}`);
+        frame.content(`${BOLD}${truncateVisible(styledTags, contentWidth)}${RESET}`);
 }
 function formatDisplayName(email) {
     return email.startsWith("apikey:") ? `${email.slice(7)} (API key)` : email;
@@ -203,84 +205,97 @@ function collectRows(usage) {
     }
     return rows;
 }
-function renderApiKeySpend(snapshot, labelWidth) {
+function renderApiKeySpend(frame, snapshot, labelWidth) {
     const scope = snapshot.projectId ? `project ${snapshot.projectName ?? snapshot.projectId}` : "organization-wide";
-    printDetail("Scope", `${scope} · via ${snapshot.adminKeyLabel} · ${fmtAge(snapshot.fetchedAt)}`, labelWidth);
+    printDetail(frame, "Scope", `${scope} · via ${snapshot.adminKeyLabel} · ${fmtAge(snapshot.fetchedAt)}`, labelWidth);
     const today = `${snapshot.todayCostEstimated ? "~" : ""}${fmtUsd(snapshot.todayUsd)} · ${fmtTokens(snapshot.todayTokens)} tokens${snapshot.todayCostEstimated ? " · estimated" : ""}`;
-    printDetail("Today", today, labelWidth);
-    printDetail("7 days", `${fmtUsd(snapshot.weekUsd)} · ${fmtTokens(snapshot.weekTokens)} tokens`, labelWidth);
-    printDetail("30 days", `${fmtUsd(snapshot.monthUsd)} · ${fmtTokens(snapshot.monthTokens)} tokens`, labelWidth);
+    printDetail(frame, "Today", today, labelWidth);
+    printDetail(frame, "7 days", `${fmtUsd(snapshot.weekUsd)} · ${fmtTokens(snapshot.weekTokens)} tokens`, labelWidth);
+    printDetail(frame, "30 days", `${fmtUsd(snapshot.monthUsd)} · ${fmtTokens(snapshot.monthTokens)} tokens`, labelWidth);
     if (snapshot.topModel && snapshot.topModel.tokens > 0) {
-        printDetail("Top model", `${snapshot.topModel.model} · ${fmtTokens(snapshot.topModel.tokens)} tokens / 30d`, labelWidth);
+        printDetail(frame, "Top model", `${snapshot.topModel.model} · ${fmtTokens(snapshot.topModel.tokens)} tokens / 30d`, labelWidth);
     }
 }
-function codexLabelWidth(usages) {
-    let width = "Top model".length;
+function codexLabelWidth(usages, width) {
+    let label = "Top model".length;
     for (const usage of usages) {
         for (const row of collectRows(usage))
-            width = Math.max(width, row.label.length);
+            label = Math.max(label, row.label.length);
     }
-    return Math.min(labelWidthCap(), width);
+    return Math.min(labelWidthCap(width), label);
 }
-function displayAccount(usage, labelWidth, index) {
-    printAccountHeader(formatDisplayName(usage.email), {
+function displayAccount(frame, usage, labelWidth, index) {
+    printAccountHeader(frame, formatDisplayName(usage.email), {
         index,
         plan: usage.planType,
         active: usage.isActive,
         recommended: usage.gtoRecommended,
     });
     if (usage.error) {
-        printError(usage.error);
+        printError(frame, usage.error);
         return;
     }
     if (usage.gtoReason)
-        printDetail("Next pick", usage.gtoReason, labelWidth);
+        printDetail(frame, "Next pick", usage.gtoReason, labelWidth);
     for (const row of collectRows(usage))
-        printQuota(row, labelWidth);
+        printQuota(frame, row, labelWidth);
     if (usage.credits) {
-        printDetail("Credits", usage.credits.unlimited ? "Unlimited" : `$${usage.credits.balance ?? "0"}`, labelWidth);
+        printDetail(frame, "Credits", usage.credits.unlimited ? "Unlimited" : `$${usage.credits.balance ?? "0"}`, labelWidth);
     }
     if (usage.apiKeySpend)
-        renderApiKeySpend(usage.apiKeySpend, labelWidth);
+        renderApiKeySpend(frame, usage.apiKeySpend, labelWidth);
     else if (usage.apiKeyHint)
-        printNote(usage.apiKeyHint);
+        printNote(frame, usage.apiKeyHint);
 }
-function displayCodex(usages, numbered) {
-    printSectionStart("Codex", usages.length, "account");
+function renderCodex(usages, options) {
+    const width = resolveWidth(options);
+    const frame = new Frame(width);
+    const numbered = options.numbered ?? false;
+    const startIndex = options.startIndex ?? 1;
+    frame.sectionStart("Codex", usages.length, "account", options.tight ?? false);
     if (usages.length === 0) {
-        printNote("No accounts configured · run 'aa codex add'");
+        printNote(frame, "No accounts configured · run 'aa codex add'");
     }
     else {
-        const labelWidth = codexLabelWidth(usages);
+        const labelWidth = codexLabelWidth(usages, width);
         for (let i = 0; i < usages.length; i++) {
             if (i > 0)
-                printDivider();
-            displayAccount(usages[i], labelWidth, numbered ? i + 1 : undefined);
+                frame.divider();
+            displayAccount(frame, usages[i], labelWidth, numbered ? startIndex + i : undefined);
         }
     }
-    printSectionEnd();
+    frame.sectionEnd();
+    return frame.lines;
+}
+export function renderCodexUsage(usages, options = {}) {
+    return renderCodex(usages, options);
 }
 export function displayAllUsage(usages) {
-    displayCodex(usages, false);
+    writeLines(renderCodex(usages, { numbered: false }));
 }
 export function displayAllUsageNumbered(usages) {
-    displayCodex(usages, true);
+    writeLines(renderCodex(usages, { numbered: true }));
 }
-export function displayAccountList(accounts) {
-    printSectionStart("Codex accounts", accounts.length, "account");
+export function renderAccountList(accounts, options = {}) {
+    const frame = new Frame(resolveWidth(options));
+    frame.sectionStart("Codex accounts", accounts.length, "account", options.tight ?? false);
     if (accounts.length === 0) {
-        printNote("No accounts configured · run 'aa codex add'");
+        printNote(frame, "No accounts configured · run 'aa codex add'");
     }
     else {
         for (let i = 0; i < accounts.length; i++) {
             if (i > 0)
-                printDivider();
+                frame.divider();
             const account = accounts[i];
-            printAccountHeader(formatDisplayName(account.email), { active: account.isActive });
-            printDetail("Added", new Date(account.addedAt).toLocaleDateString(), "Added".length);
+            printAccountHeader(frame, formatDisplayName(account.email), { active: account.isActive });
+            printDetail(frame, "Added", new Date(account.addedAt).toLocaleDateString(), "Added".length);
         }
     }
-    printSectionEnd();
+    frame.sectionEnd();
+    return frame.lines;
+}
+export function displayAccountList(accounts) {
+    writeLines(renderAccountList(accounts));
 }
 function formatResetTime(resetsAt) {
     const timestamp = typeof resetsAt === "number"
@@ -337,57 +352,65 @@ function collectClaudeRows(profile) {
     }
     return rows;
 }
-function claudeLabelWidth(profiles) {
-    let width = "Identity".length;
+function claudeLabelWidth(profiles, width) {
+    let label = "Identity".length;
     for (const profile of profiles) {
         for (const row of collectClaudeRows(profile))
-            width = Math.max(width, row.label.length);
+            label = Math.max(label, row.label.length);
     }
-    return Math.min(labelWidthCap(), width);
+    return Math.min(labelWidthCap(width), label);
 }
-function displayClaudeProfile(profile, labelWidth, index) {
-    printAccountHeader(profile.name, { index, plan: profile.auth?.subscriptionType, active: profile.isActive });
+function displayClaudeProfile(frame, profile, labelWidth, index) {
+    printAccountHeader(frame, profile.name, { index, plan: profile.auth?.subscriptionType, active: profile.isActive });
     if (profile.error) {
-        printError(profile.error);
+        printError(frame, profile.error);
         return;
     }
     if (!profile.auth?.loggedIn) {
-        printNote("Not logged in");
+        printNote(frame, "Not logged in");
         return;
     }
     const identity = [profile.auth.email, profile.auth.orgName].filter(Boolean).join(" · ");
     if (identity && identity !== profile.name)
-        printDetail("Identity", identity, labelWidth);
+        printDetail(frame, "Identity", identity, labelWidth);
     const rows = collectClaudeRows(profile);
     for (const row of rows)
-        printQuota(row, labelWidth);
+        printQuota(frame, row, labelWidth);
     if (rows.length === 0 && !identity)
-        printNote("Usage data unavailable");
+        printNote(frame, "Usage data unavailable");
     if (profile.usageError) {
         const cached = rows.length > 0 && profile.usageCachedAt ? ` · cached ${fmtAge(profile.usageCachedAt)}` : "";
-        printNote(`${profile.usageError}${cached}`);
+        printNote(frame, `${profile.usageError}${cached}`);
     }
 }
-function displayClaude(profiles, numbered) {
-    printSectionStart("Claude Code", profiles.length, "profile");
+function renderClaude(profiles, options) {
+    const width = resolveWidth(options);
+    const frame = new Frame(width);
+    const numbered = options.numbered ?? false;
+    const startIndex = options.startIndex ?? 1;
+    frame.sectionStart("Claude Code", profiles.length, "profile", options.tight ?? false);
     if (profiles.length === 0) {
-        printNote("No profiles configured · run 'aa claude add'");
+        printNote(frame, "No profiles configured · run 'aa claude add'");
     }
     else {
-        const labelWidth = claudeLabelWidth(profiles);
+        const labelWidth = claudeLabelWidth(profiles, width);
         for (let i = 0; i < profiles.length; i++) {
             if (i > 0)
-                printDivider();
-            displayClaudeProfile(profiles[i], labelWidth, numbered ? i + 1 : undefined);
+                frame.divider();
+            displayClaudeProfile(frame, profiles[i], labelWidth, numbered ? startIndex + i : undefined);
         }
     }
-    printSectionEnd();
+    frame.sectionEnd();
+    return frame.lines;
+}
+export function renderClaudeProfiles(profiles, options = {}) {
+    return renderClaude(profiles, options);
 }
 export function displayClaudeProfiles(profiles) {
-    displayClaude(profiles, false);
+    writeLines(renderClaude(profiles, { numbered: false }));
 }
 export function displayClaudeProfilesNumbered(profiles) {
-    displayClaude(profiles, true);
+    writeLines(renderClaude(profiles, { numbered: true }));
 }
 function grokUsedPercent(profile) {
     const config = profile.usage?.config;
@@ -407,29 +430,29 @@ function grokPeriodLabel(profile) {
         return "Monthly limit";
     return "Usage limit";
 }
-function grokLabelWidth(profiles) {
-    let width = "Prepaid credits".length;
+function grokLabelWidth(profiles, width) {
+    let label = "Prepaid credits".length;
     for (const profile of profiles)
-        width = Math.max(width, grokPeriodLabel(profile).length);
-    return Math.min(labelWidthCap(), width);
+        label = Math.max(label, grokPeriodLabel(profile).length);
+    return Math.min(labelWidthCap(width), label);
 }
-function displayGrokProfile(profile, labelWidth, index) {
-    printAccountHeader(profile.name, { index, plan: profile.usage?.subscriptionTier, active: profile.isActive });
+function displayGrokProfile(frame, profile, labelWidth, index) {
+    printAccountHeader(frame, profile.name, { index, plan: profile.usage?.subscriptionTier, active: profile.isActive });
     if (profile.error) {
-        printError(profile.error);
+        printError(frame, profile.error);
         return;
     }
     if (!profile.auth) {
-        printNote("Not logged in");
+        printNote(frame, "Not logged in");
         return;
     }
     const identity = [profile.auth.email, profile.auth.organization_name ?? profile.auth.team_name].filter(Boolean).join(" · ");
     if (identity && identity !== profile.name)
-        printDetail("Identity", identity, labelWidth);
+        printDetail(frame, "Identity", identity, labelWidth);
     const usedPercent = grokUsedPercent(profile);
     if (usedPercent !== null) {
         const resetsAt = profile.usage?.config?.currentPeriod?.end ?? profile.usage?.config?.billingPeriodEnd;
-        printQuota({
+        printQuota(frame, {
             label: grokPeriodLabel(profile),
             usedPercent: Math.max(0, Math.min(100, usedPercent)),
             resetsIn: resetsAt ? formatResetTime(resetsAt) : undefined,
@@ -437,35 +460,111 @@ function displayGrokProfile(profile, labelWidth, index) {
     }
     const prepaid = profile.usage?.config?.prepaidBalance?.val;
     if (prepaid !== undefined)
-        printDetail("Prepaid credits", fmtUsd(prepaid / 100), labelWidth);
+        printDetail(frame, "Prepaid credits", fmtUsd(prepaid / 100), labelWidth);
     const onDemandUsed = profile.usage?.config?.onDemandUsed?.val;
     const onDemandCap = profile.usage?.config?.onDemandCap?.val;
     if (onDemandUsed !== undefined || onDemandCap !== undefined) {
         const cap = onDemandCap !== undefined ? ` / ${fmtUsd(onDemandCap / 100)}` : "";
-        printDetail("On-demand", `${fmtUsd((onDemandUsed ?? 0) / 100)}${cap}`, labelWidth);
+        printDetail(frame, "On-demand", `${fmtUsd((onDemandUsed ?? 0) / 100)}${cap}`, labelWidth);
     }
     if (usedPercent === null && prepaid === undefined && onDemandUsed === undefined && !identity)
-        printNote("Usage data unavailable");
+        printNote(frame, "Usage data unavailable");
 }
-function displayGrok(profiles, numbered) {
-    printSectionStart("Grok Build", profiles.length, "profile");
+function renderGrok(profiles, options) {
+    const width = resolveWidth(options);
+    const frame = new Frame(width);
+    const numbered = options.numbered ?? false;
+    const startIndex = options.startIndex ?? 1;
+    frame.sectionStart("Grok Build", profiles.length, "profile", options.tight ?? false);
     if (profiles.length === 0) {
-        printNote("No profiles configured · run 'aa grok add'");
+        printNote(frame, "No profiles configured · run 'aa grok add'");
     }
     else {
-        const labelWidth = grokLabelWidth(profiles);
+        const labelWidth = grokLabelWidth(profiles, width);
         for (let i = 0; i < profiles.length; i++) {
             if (i > 0)
-                printDivider();
-            displayGrokProfile(profiles[i], labelWidth, numbered ? i + 1 : undefined);
+                frame.divider();
+            displayGrokProfile(frame, profiles[i], labelWidth, numbered ? startIndex + i : undefined);
         }
     }
-    printSectionEnd();
+    frame.sectionEnd();
+    return frame.lines;
+}
+export function renderGrokProfiles(profiles, options = {}) {
+    return renderGrok(profiles, options);
 }
 export function displayGrokProfiles(profiles) {
-    displayGrok(profiles, false);
+    writeLines(renderGrok(profiles, { numbered: false }));
 }
 export function displayGrokProfilesNumbered(profiles) {
-    displayGrok(profiles, true);
+    writeLines(renderGrok(profiles, { numbered: true }));
+}
+export function renderCombinedUsage(data, options = {}) {
+    const width = resolveWidth(options);
+    const numbered = options.numbered ?? false;
+    const tight = options.tight ?? false;
+    const lines = [];
+    let nextIndex = options.startIndex ?? 1;
+    const push = (section) => {
+        if (lines.length && section[0] !== "")
+            lines.push("");
+        lines.push(...section);
+    };
+    push(renderCodex(data.codex, { width, numbered, startIndex: nextIndex, tight: true }));
+    if (numbered)
+        nextIndex += data.codex.length;
+    push(renderClaude(data.claude, { width, numbered, startIndex: nextIndex, tight: true }));
+    if (numbered)
+        nextIndex += data.claude.length;
+    push(renderGrok(data.grok, { width, numbered, startIndex: nextIndex, tight: true }));
+    if (!tight && lines[0] !== "")
+        lines.unshift("");
+    return lines;
+}
+export function composeDashboardFrame(body, chrome, size) {
+    const width = dashboardWidth(size);
+    const rows = Math.max(1, size.rows);
+    const updated = chrome.updatedAt
+        ? chrome.updatedAt.toLocaleTimeString()
+        : "";
+    const refresh = chrome.refreshing
+        ? "refreshing…"
+        : chrome.intervalSeconds
+            ? `refresh ${chrome.intervalSeconds}s`
+            : "";
+    const title = chrome.title ?? "Usage";
+    const meta = [updated && `updated ${updated}`, refresh].filter(Boolean).join(" · ");
+    const headerLeft = `${title}`;
+    const header = meta
+        ? `${BOLD}${headerLeft}${RESET}${DIM}  ${meta}${RESET}`
+        : `${BOLD}${headerLeft}${RESET}`;
+    const help = chrome.help ?? "q quit";
+    const message = chrome.message ? `${chrome.message}  ·  ${help}` : help;
+    const footer = `${DIM}${message}${RESET}`;
+    const frame = [padVisible(header, width)];
+    const bodyBudget = Math.max(0, rows - 2);
+    const clipped = clipBody(body, bodyBudget, width);
+    for (const line of clipped)
+        frame.push(padVisible(line, width));
+    while (frame.length < rows - 1)
+        frame.push("".padEnd(width));
+    frame.push(padVisible(footer, width));
+    return frame.slice(0, rows);
+}
+function clipBody(body, budget, width) {
+    if (budget <= 0)
+        return [];
+    if (body.length <= budget)
+        return body.map(line => padVisible(line, width));
+    if (budget === 1)
+        return [`${DIM}${truncateVisible("… truncated", width)}${RESET}`];
+    const head = body.slice(0, budget - 1).map(line => padVisible(line, width));
+    head.push(`${DIM}${truncateVisible("… truncated to terminal height", width)}${RESET}`);
+    return head;
+}
+function writeLines(lines) {
+    if (!lines.length)
+        return;
+    console.log(lines.join("\n"));
 }
 //# sourceMappingURL=display.js.map

@@ -11,6 +11,7 @@ import {
 } from "./claude-store.js";
 import { displayClaudeProfiles, displayClaudeProfilesNumbered } from "./display.js";
 import { questionOrEscape } from "./interactive.js";
+import { alreadyActiveOutcome, type SwitchOutcome } from "./live.js";
 import type { ClaudeProfileInfo } from "./types.js";
 
 const HELP = `aa claude - Manage multiple Claude Code profiles
@@ -31,7 +32,7 @@ Shell integration (add to ~/.zshrc or ~/.bashrc):
 `;
 
 /** Fetch auth status, credentials, and usage for all profiles in parallel */
-async function fetchInfos(): Promise<ClaudeProfileInfo[]> {
+export async function loadClaudeProfiles(): Promise<ClaudeProfileInfo[]> {
   const profiles = listProfiles();
   const active = getActiveProfile();
 
@@ -191,38 +192,54 @@ async function cmdAdd(name?: string): Promise<void> {
 }
 
 export async function claudeStatus(): Promise<void> {
-  const infos = await fetchInfos();
-  displayClaudeProfiles(infos);
+  displayClaudeProfiles(await loadClaudeProfiles());
+}
+
+function resolveClaudeProfileName(name: string): string {
+  if (findProfile(name)) return name;
+  const matches = listProfiles().filter(p => p.name.toLowerCase().includes(name.toLowerCase()));
+  if (matches.length === 0) throw new Error(`No profile matching "${name}".`);
+  if (matches.length > 1) {
+    throw new Error(`Multiple matches for "${name}":\n${matches.map(m => `  ${m.name}`).join("\n")}`);
+  }
+  return matches[0]!.name;
+}
+
+export function activateClaudeProfile(name: string): SwitchOutcome {
+  const selected = resolveClaudeProfileName(name);
+  if (getActiveProfile() === selected) return alreadyActiveOutcome(selected);
+  setActiveProfile(selected);
+  return {
+    status: "switched",
+    label: selected,
+    hint: `eval "$(aa claude env)"`,
+  };
 }
 
 async function cmdSwitch(name?: string): Promise<void> {
   if (!name) return cmdPromptSwitch();
 
-  if (!findProfile(name)) {
-    // Try partial match
-    const all = listProfiles();
-    const matches = all.filter(p => p.name.toLowerCase().includes(name.toLowerCase()));
-    if (matches.length === 0) {
-      console.error(`No profile matching "${name}".`);
-      process.exit(1);
-    }
-    if (matches.length > 1) {
-      console.error(`Multiple matches for "${name}":`);
-      for (const m of matches) console.error(`  ${m.name}`);
-      process.exit(1);
-    }
-    return cmdSwitch(matches[0]!.name);
+  let result: SwitchOutcome;
+  try {
+    result = activateClaudeProfile(name);
+  } catch (err) {
+    console.error((err as Error).message);
+    process.exit(1);
   }
 
-  setActiveProfile(name);
-  const instancePath = getInstancePath(name);
-  console.log(`Active Claude profile: ${name}`);
+  if (result.status !== "switched") {
+    console.log(`Already using Claude profile: ${result.label}`);
+    return;
+  }
+
+  const instancePath = getInstancePath(result.label);
+  console.log(`Active Claude profile: ${result.label}`);
   console.log(`\n  export CLAUDE_CONFIG_DIR=${instancePath}`);
   console.log(`\nOr add to shell rc: eval "$(aa claude env)"`);
 }
 
 async function cmdPromptSwitch(): Promise<void> {
-  const infos = await fetchInfos();
+  const infos = await loadClaudeProfiles();
   if (infos.length === 0) {
     console.log("No profiles. Run 'aa claude add' to create one.");
     return;

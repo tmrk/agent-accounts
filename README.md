@@ -46,10 +46,12 @@ layout adapts from narrow SSH sessions to wide terminals without dropping long i
 or recommendation details. Color is used in interactive terminals and omitted automatically when
 output is redirected; set `NO_COLOR=1` to disable it explicitly.
 
-Live mode fetches fresh subscription usage on every refresh and redraws the terminal, so the
-remaining percentages fall as the coding agents consume their limits. It is opt-in and can also
-be scoped to one provider with `aa codex --live`, `aa claude --live`, or `aa grok --live`.
-Press Ctrl-C to stop. API-key spend remains backed by its slower billing cache.
+Live mode (`aa status --live`, or `--live` on a single provider) is a flicker-free dashboard:
+it fetches in the background, then paints the new frame in place, and reflows immediately when
+the terminal is resized. Number keys select an account (type `12` then Enter if there are more
+than nine). Selecting the account that is already active — including the only account on a
+provider — is a no-op. Press `r` to refresh now, or `q` / Esc / Ctrl-C to quit. API-key spend
+remains backed by its slower billing cache.
 
 ## Codex
 

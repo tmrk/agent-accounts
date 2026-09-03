@@ -17,6 +17,7 @@ import {
 } from "./grok-store.js";
 import { displayGrokProfiles, displayGrokProfilesNumbered } from "./display.js";
 import { questionOrEscape } from "./interactive.js";
+import { alreadyActiveOutcome, type SwitchOutcome } from "./live.js";
 import type { GrokProfileInfo } from "./types.js";
 
 const HELP = `aa grok - Manage multiple Grok Build accounts
@@ -66,7 +67,7 @@ function runInherited(command: string, args: string[], env: NodeJS.ProcessEnv): 
   });
 }
 
-async function fetchInfos(): Promise<GrokProfileInfo[]> {
+export async function loadGrokProfiles(): Promise<GrokProfileInfo[]> {
   const active = getActiveGrokProfile();
   return Promise.all(listGrokProfiles().map(async profile => {
     const instancePath = getGrokInstancePath(profile.name);
@@ -154,25 +155,44 @@ async function cmdAdd(args: string[]): Promise<void> {
 }
 
 export async function grokStatus(): Promise<void> {
-  displayGrokProfiles(await fetchInfos());
+  displayGrokProfiles(await loadGrokProfiles());
+}
+
+function resolveGrokProfileName(name: string): string {
+  const exact = findGrokProfile(name);
+  if (exact) return exact.name;
+  const matches = listGrokProfiles().filter(p => p.name.toLowerCase().includes(name.toLowerCase()));
+  if (matches.length === 0) throw new Error(`No Grok Build profile matching "${name}".`);
+  if (matches.length > 1) {
+    throw new Error(`Multiple Grok Build profiles match "${name}": ${matches.map(p => p.name).join(", ")}`);
+  }
+  return matches[0]!.name;
+}
+
+export function activateGrokProfile(name: string): SwitchOutcome {
+  const selected = resolveGrokProfileName(name);
+  if (getActiveGrokProfile() === selected) return alreadyActiveOutcome(selected);
+  setActiveGrokProfile(selected);
+  return {
+    status: "switched",
+    label: selected,
+    hint: `eval "$(aa grok env)"`,
+  };
 }
 
 async function cmdSwitch(name?: string): Promise<void> {
   if (!name) return cmdPromptSwitch();
-  let selected = findGrokProfile(name);
-  if (!selected) {
-    const matches = listGrokProfiles().filter(p => p.name.toLowerCase().includes(name.toLowerCase()));
-    if (matches.length === 0) throw new Error(`No Grok Build profile matching "${name}".`);
-    if (matches.length > 1) throw new Error(`Multiple Grok Build profiles match "${name}": ${matches.map(p => p.name).join(", ")}`);
-    selected = matches[0]!;
+  const result = activateGrokProfile(name);
+  if (result.status !== "switched") {
+    console.log(`Already using Grok Build profile: ${result.label}`);
+    return;
   }
-  setActiveGrokProfile(selected.name);
-  console.log(`Active Grok Build profile: ${selected.name}`);
-  console.log(`Run 'eval "$(aa grok env)"' to select it in this shell, or 'aa grok run ${selected.name}'.`);
+  console.log(`Active Grok Build profile: ${result.label}`);
+  console.log(`Run 'eval "$(aa grok env)"' to select it in this shell, or 'aa grok run ${result.label}'.`);
 }
 
 async function cmdPromptSwitch(): Promise<void> {
-  const infos = await fetchInfos();
+  const infos = await loadGrokProfiles();
   if (infos.length === 0) {
     console.log("No Grok Build profiles. Run 'aa grok add' to create one.");
     return;
