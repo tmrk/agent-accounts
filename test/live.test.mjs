@@ -9,7 +9,7 @@ import {
   parseLiveArgs,
   shouldRunLiveDashboard,
 } from "../dist/live.js";
-import { paintFrame } from "../dist/term.js";
+import { leaveDashboardScreen, paintFrame } from "../dist/term.js";
 
 test("enables live mode without changing the command", () => {
   assert.deepEqual(parseLiveArgs(["status", "--live"]), {
@@ -83,4 +83,13 @@ test("paints by homing the cursor instead of clearing the screen", () => {
   assert.match(sequence, /\x1b\[H/);
   assert.match(sequence, /\x1b\[J/);
   assert.doesNotMatch(sequence, /\x1b\[2J/);
+});
+
+test("restores the terminal and ends on a new line when leaving the dashboard", () => {
+  const writes = [];
+  leaveDashboardScreen({ write(chunk) { writes.push(chunk); } });
+  const sequence = writes.join("");
+  assert.match(sequence, /\x1b\[\?1049l/);
+  assert.match(sequence, /\x1b\[\?25h/);
+  assert.match(sequence, /\r\n$/);
 });

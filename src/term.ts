@@ -12,6 +12,7 @@ export const HIDE_CURSOR = "\x1b[?25l";
 export const SHOW_CURSOR = "\x1b[?25h";
 export const DISABLE_WRAP = "\x1b[?7l";
 export const ENABLE_WRAP = "\x1b[?7h";
+export const RESET_SGR = "\x1b[0m";
 export const SYNC_START = "\x1b[?2026h";
 export const SYNC_END = "\x1b[?2026l";
 export const CURSOR_HOME = "\x1b[H";
@@ -110,5 +111,7 @@ export function enterDashboardScreen(output: { write(chunk: string): unknown } =
 }
 
 export function leaveDashboardScreen(output: { write(chunk: string): unknown } = process.stdout): void {
-  output.write(`${ENABLE_WRAP}${SHOW_CURSOR}${LEAVE_ALT_SCREEN}`);
+  // Leave the alternate screen first so cursor/wrap restore apply to the
+  // main buffer, then drop a newline so the shell prompt is on its own line.
+  output.write(`${RESET_SGR}${LEAVE_ALT_SCREEN}${ENABLE_WRAP}${SHOW_CURSOR}\r\n`);
 }

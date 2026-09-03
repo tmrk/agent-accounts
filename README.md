@@ -11,7 +11,7 @@ Each provider keeps its own isolated credentials. Account usage is fetched in pa
 ## Install
 
 ```bash
-npm install -g github:tmrk/agent-accounts
+npm install -g agent-accounts
 ```
 
 This installs both `aa` and `agent-accounts`. Node.js 18+ is required, along with the provider CLIs you intend to use.
@@ -19,7 +19,13 @@ This installs both `aa` and `agent-accounts`. Node.js 18+ is required, along wit
 If your npm global bin directory is not on `PATH` (including the Raspberry Pi setup used to test this project), install into `~/.local`, which is already on `PATH`:
 
 ```bash
-npm install -g --prefix "$HOME/.local" github:tmrk/agent-accounts
+npm install -g --prefix "$HOME/.local" agent-accounts
+```
+
+The same CLI is also available from source:
+
+```bash
+npm install -g github:tmrk/agent-accounts
 ```
 
 ## Quick start
@@ -54,6 +60,12 @@ output) for a one-shot snapshot. `--live` on a single provider still works, for 
 nine). Selecting the account that is already active — including the only account on a
 provider — is a no-op. Press `r` to refresh now, or `q` / Esc / Ctrl-C to quit. API-key spend
 remains backed by its slower billing cache.
+
+The screenshots below are a fictional demo (made-up emails and usage), not a live account dump.
+
+![Wide terminal dashboard](docs/screenshots/dashboard-wide.png)
+
+![Narrow terminal dashboard](docs/screenshots/dashboard-narrow.png)
 
 ## Codex
 
@@ -126,6 +138,7 @@ Usage integrations for subscription accounts call the same provider endpoints th
 npm install
 npm test
 npm start -- help
+npm run screenshots   # regenerate the fictional README images
 ```
 
 ## License

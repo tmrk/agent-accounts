@@ -2,9 +2,24 @@
   "name": "agent-accounts",
   "version": "0.1.0",
   "description": "Manage multiple Codex, Claude Code, and Grok Build accounts and usage",
+  "author": "Tamas Marki",
   "type": "module",
   "files": [
-    "dist"
+    "dist",
+    "docs/screenshots"
+  ],
+  "keywords": [
+    "cli",
+    "tui",
+    "dashboard",
+    "codex",
+    "claude",
+    "grok",
+    "openai",
+    "anthropic",
+    "xai",
+    "usage",
+    "accounts"
   ],
   "bin": {
     "aa": "dist/index.js",
@@ -14,6 +29,8 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "test": "npm run build && node --test test/*.test.mjs",
+    "screenshots": "npm run build && env -u NO_COLOR FORCE_COLOR=1 node scripts/render-screenshots.mjs",
+    "prepublishOnly": "npm test",
     "start": "node dist/index.js"
   },
   "engines": {

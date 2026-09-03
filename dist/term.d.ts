@@ -8,6 +8,7 @@ export declare const HIDE_CURSOR = "\u001B[?25l";
 export declare const SHOW_CURSOR = "\u001B[?25h";
 export declare const DISABLE_WRAP = "\u001B[?7l";
 export declare const ENABLE_WRAP = "\u001B[?7h";
+export declare const RESET_SGR = "\u001B[0m";
 export declare const SYNC_START = "\u001B[?2026h";
 export declare const SYNC_END = "\u001B[?2026l";
 export declare const CURSOR_HOME = "\u001B[H";

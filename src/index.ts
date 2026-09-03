@@ -13,8 +13,6 @@ import {
   displayAllUsage,
   displayAllUsageNumbered,
   displayAccountList,
-  displayClaudeProfiles,
-  displayGrokProfiles,
   renderClaudeProfiles,
   renderCodexUsage,
   renderCombinedUsage,
@@ -917,47 +915,50 @@ export async function loadAllUsage(): Promise<{
 }
 
 async function cmdAllStatus(): Promise<void> {
-  const data = await loadAllUsage();
-  if (data.codex.length === 0) {
-    console.log("No accounts configured. Run 'agent-accounts add' to add one.");
-  } else {
-    displayAllUsage(data.codex);
-  }
-  displayClaudeProfiles(data.claude);
-  displayGrokProfiles(data.grok);
+  console.log(renderCombinedUsage(await loadAllUsage()).join("\n"));
+}
+
+function codexSwitchables(usages: AccountUsage[], startIndex = 1): SwitchableAccount[] {
+  return usages.map((usage, i) => ({
+    index: startIndex + i,
+    provider: "codex" as const,
+    id: usage.email,
+    label: formatCodexLabel(usage.email),
+    active: usage.isActive,
+  }));
+}
+
+function claudeSwitchables(
+  profiles: Awaited<ReturnType<typeof loadClaudeProfiles>>,
+  startIndex = 1,
+): SwitchableAccount[] {
+  return profiles.map((profile, i) => ({
+    index: startIndex + i,
+    provider: "claude" as const,
+    id: profile.name,
+    label: profile.name,
+    active: profile.isActive,
+  }));
+}
+
+function grokSwitchables(
+  profiles: Awaited<ReturnType<typeof loadGrokProfiles>>,
+  startIndex = 1,
+): SwitchableAccount[] {
+  return profiles.map((profile, i) => ({
+    index: startIndex + i,
+    provider: "grok" as const,
+    id: profile.name,
+    label: profile.name,
+    active: profile.isActive,
+  }));
 }
 
 function combinedSwitchables(data: Awaited<ReturnType<typeof loadAllUsage>>): SwitchableAccount[] {
-  const items: SwitchableAccount[] = [];
-  let index = 1;
-  for (const usage of data.codex) {
-    items.push({
-      index: index++,
-      provider: "codex",
-      id: usage.email,
-      label: formatCodexLabel(usage.email),
-      active: usage.isActive,
-    });
-  }
-  for (const profile of data.claude) {
-    items.push({
-      index: index++,
-      provider: "claude",
-      id: profile.name,
-      label: profile.name,
-      active: profile.isActive,
-    });
-  }
-  for (const profile of data.grok) {
-    items.push({
-      index: index++,
-      provider: "grok",
-      id: profile.name,
-      label: profile.name,
-      active: profile.isActive,
-    });
-  }
-  return items;
+  const codex = codexSwitchables(data.codex);
+  const claude = claudeSwitchables(data.claude, codex.length + 1);
+  const grok = grokSwitchables(data.grok, codex.length + claude.length + 1);
+  return [...codex, ...claude, ...grok];
 }
 
 async function selectCombinedAccount(account: SwitchableAccount): Promise<SwitchOutcome> {
@@ -990,13 +991,7 @@ async function cmdLiveStatus(args: string[], intervalSeconds: number): Promise<v
       title: "Codex",
       load: loadCodexUsages,
       render: (data, width) => renderCodexUsage(data, { width, numbered: true, tight: true }),
-      accounts: data => data.map((usage, i) => ({
-        index: i + 1,
-        provider: "codex" as const,
-        id: usage.email,
-        label: formatCodexLabel(usage.email),
-        active: usage.isActive,
-      })),
+      accounts: data => codexSwitchables(data),
       onSelect: account => activateCodexAccount(account.id),
     });
     return;
@@ -1008,13 +1003,7 @@ async function cmdLiveStatus(args: string[], intervalSeconds: number): Promise<v
       title: "Claude Code",
       load: loadClaudeProfiles,
       render: (data, width) => renderClaudeProfiles(data, { width, numbered: true, tight: true }),
-      accounts: data => data.map((profile, i) => ({
-        index: i + 1,
-        provider: "claude" as const,
-        id: profile.name,
-        label: profile.name,
-        active: profile.isActive,
-      })),
+      accounts: data => claudeSwitchables(data),
       onSelect: account => activateClaudeProfile(account.id),
     });
     return;
@@ -1026,13 +1015,7 @@ async function cmdLiveStatus(args: string[], intervalSeconds: number): Promise<v
       title: "Grok Build",
       load: loadGrokProfiles,
       render: (data, width) => renderGrokProfiles(data, { width, numbered: true, tight: true }),
-      accounts: data => data.map((profile, i) => ({
-        index: i + 1,
-        provider: "grok" as const,
-        id: profile.name,
-        label: profile.name,
-        active: profile.isActive,
-      })),
+      accounts: data => grokSwitchables(data),
       onSelect: account => activateGrokProfile(account.id),
     });
     return;

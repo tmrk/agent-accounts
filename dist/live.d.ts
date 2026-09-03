@@ -20,8 +20,6 @@ export type DashboardKey = {
 } | {
     type: "refresh";
 } | {
-    type: "resize";
-} | {
     type: "digit";
     value: string;
 } | {

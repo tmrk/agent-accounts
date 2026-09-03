@@ -7,7 +7,13 @@ import {
   type ViewSize,
 } from "./term.js";
 
-const COLOR_ENABLED = Boolean(process.stdout.isTTY) && process.env.NO_COLOR === undefined;
+function detectColor(): boolean {
+  if (process.env.FORCE_COLOR && process.env.FORCE_COLOR !== "0") return true;
+  if (process.env.NO_COLOR !== undefined || process.env.FORCE_COLOR === "0") return false;
+  return Boolean(process.stdout.isTTY);
+}
+
+const COLOR_ENABLED = detectColor();
 const ansi = (code: string): string => COLOR_ENABLED ? code : "";
 const RESET = ansi("\x1b[0m");
 const BOLD = ansi("\x1b[1m");
