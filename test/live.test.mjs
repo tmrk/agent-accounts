@@ -7,31 +7,48 @@ import {
   commitTypedNumber,
   interpretKey,
   parseLiveArgs,
+  shouldRunLiveDashboard,
 } from "../dist/live.js";
 import { paintFrame } from "../dist/term.js";
 
 test("enables live mode without changing the command", () => {
   assert.deepEqual(parseLiveArgs(["status", "--live"]), {
     args: ["status"],
-    options: { enabled: true, intervalSeconds: DEFAULT_LIVE_INTERVAL_SECONDS },
+    options: { enabled: true, once: false, intervalSeconds: DEFAULT_LIVE_INTERVAL_SECONDS },
   });
 });
 
 test("accepts both live interval forms anywhere in the command", () => {
   assert.deepEqual(parseLiveArgs(["--live=15", "codex", "status"]), {
     args: ["codex", "status"],
-    options: { enabled: true, intervalSeconds: 15 },
+    options: { enabled: true, once: false, intervalSeconds: 15 },
   });
   assert.deepEqual(parseLiveArgs(["claude", "--interval", "10", "--live"]), {
     args: ["claude"],
-    options: { enabled: true, intervalSeconds: 10 },
+    options: { enabled: true, once: false, intervalSeconds: 10 },
+  });
+  assert.deepEqual(parseLiveArgs(["--interval=10"]), {
+    args: [],
+    options: { enabled: false, once: false, intervalSeconds: 10 },
   });
 });
 
-test("rejects invalid or standalone intervals", () => {
+test("rejects invalid or conflicting live flags", () => {
   assert.throws(() => parseLiveArgs(["--live", "--interval", "2"]), /5 to 3600/);
-  assert.throws(() => parseLiveArgs(["--interval=30", "status"]), /together with --live/);
+  assert.throws(() => parseLiveArgs(["--interval=30", "add"]), /live dashboard/);
   assert.throws(() => parseLiveArgs(["--live=soon"]), /whole number/);
+  assert.throws(() => parseLiveArgs(["--live", "--once"]), /either --live or --once/);
+});
+
+test("opens the dashboard for a TTY aa, and a snapshot with --once", () => {
+  const tty = { stdinIsTTY: true, stdoutIsTTY: true };
+  const parsed = parseLiveArgs([]);
+  assert.equal(shouldRunLiveDashboard(parsed.args, parsed.options, tty), true);
+  assert.equal(shouldRunLiveDashboard(["status"], parsed.options, tty), true);
+  assert.equal(shouldRunLiveDashboard(["status"], parsed.options, { stdinIsTTY: false, stdoutIsTTY: false }), false);
+
+  const once = parseLiveArgs(["--once"]);
+  assert.equal(shouldRunLiveDashboard(once.args, once.options, tty), false);
 });
 
 test("maps dashboard keys to quit, refresh, and digit entry", () => {

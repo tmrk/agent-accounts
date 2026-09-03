@@ -4,11 +4,16 @@ export declare const MIN_LIVE_INTERVAL_SECONDS = 5;
 export declare const MAX_LIVE_INTERVAL_SECONDS: number;
 export interface LiveOptions {
     enabled: boolean;
+    once: boolean;
     intervalSeconds: number;
 }
 export interface ParsedLiveArgs {
     args: string[];
     options: LiveOptions;
+}
+export interface TtyState {
+    stdinIsTTY: boolean;
+    stdoutIsTTY: boolean;
 }
 export type DashboardKey = {
     type: "quit";
@@ -34,6 +39,10 @@ export type NumberCommit = {
 } | {
     type: "invalid";
 };
+/** True for the all-providers status view (`aa` or `aa status`). */
+export declare function isDefaultStatusCommand(args: string[]): boolean;
+/** Enter the live dashboard in a TTY unless `--once` was passed. */
+export declare function shouldRunLiveDashboard(args: string[], options: LiveOptions, tty?: TtyState): boolean;
 /** Pull global live-view flags out of a command without disturbing other arguments. */
 export declare function parseLiveArgs(args: string[]): ParsedLiveArgs;
 export declare function interpretKey(input: {

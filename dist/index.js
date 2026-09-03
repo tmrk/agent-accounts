@@ -18,15 +18,16 @@ import { parseSwitchArgs } from "./switch-options.js";
 import { parseAddArgs } from "./add-options.js";
 import { runCodexLogin } from "./codex-login.js";
 import { questionOrEscape } from "./interactive.js";
-import { alreadyActiveOutcome, parseLiveArgs, runLive } from "./live.js";
+import { alreadyActiveOutcome, parseLiveArgs, runLive, shouldRunLiveDashboard } from "./live.js";
 const USAGE_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 const HELP = `agent-accounts (aa) - Manage Codex, Claude Code, and Grok Build accounts
 
 Usage:
-  aa                         Show usage across all providers
-  aa status                  Show usage across all providers
-  aa --live                  Live dashboard (resize, no-flash refresh, number switch)
-  aa status --live           Same dashboard
+  aa                         Live usage dashboard (TTY) / snapshot (non-TTY)
+  aa status                  Same as aa
+  aa --once                  One-shot snapshot even in a TTY
+  aa --interval 10           Live dashboard, refresh every 10s
+  aa --live                  Same dashboard (explicit)
   aa status --live --interval 10
   aa codex [command]         Manage Codex accounts
   aa claude [command]        Manage Claude Code accounts
@@ -952,7 +953,7 @@ async function cmdLiveStatus(args, intervalSeconds) {
 async function main() {
     const parsed = parseLiveArgs(process.argv.slice(2));
     const args = parsed.args;
-    if (parsed.options.enabled) {
+    if (shouldRunLiveDashboard(args, parsed.options)) {
         return cmdLiveStatus(args, parsed.options.intervalSeconds);
     }
     const command = args[0];

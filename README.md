@@ -25,9 +25,10 @@ npm install -g --prefix "$HOME/.local" github:tmrk/agent-accounts
 ## Quick start
 
 ```bash
-aa status                         # usage across all providers
-aa status --live                  # refresh the usage display every 30s
-aa status --live --interval 10    # choose a refresh interval (5-3600s)
+aa                                # live dashboard in a TTY (snapshot if piped)
+aa --once                         # one-shot snapshot even in a TTY
+aa --interval 10                  # live dashboard, refresh every 10s
+aa status --live                  # same dashboard (explicit --live)
 
 aa codex add --device-auth        # add a Codex account
 aa claude add                     # add a Claude Code account
@@ -46,10 +47,11 @@ layout adapts from narrow SSH sessions to wide terminals without dropping long i
 or recommendation details. Color is used in interactive terminals and omitted automatically when
 output is redirected; set `NO_COLOR=1` to disable it explicitly.
 
-Live mode (`aa status --live`, or `--live` on a single provider) is a flicker-free dashboard:
-it fetches in the background, then paints the new frame in place, and reflows immediately when
-the terminal is resized. Number keys select an account (type `12` then Enter if there are more
-than nine). Selecting the account that is already active — including the only account on a
+In a TTY, `aa` itself is that dashboard: it fetches in the background, paints the new frame in
+place, and reflows immediately when the terminal is resized. Use `aa --once` (or pipe the
+output) for a one-shot snapshot. `--live` on a single provider still works, for example
+`aa codex --live`. Number keys select an account (type `12` then Enter if there are more than
+nine). Selecting the account that is already active — including the only account on a
 provider — is a no-op. Press `r` to refresh now, or `q` / Esc / Ctrl-C to quit. API-key spend
 remains backed by its slower billing cache.
 

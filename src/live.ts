@@ -15,12 +15,18 @@ export const MAX_LIVE_INTERVAL_SECONDS = 60 * 60;
 
 export interface LiveOptions {
   enabled: boolean;
+  once: boolean;
   intervalSeconds: number;
 }
 
 export interface ParsedLiveArgs {
   args: string[];
   options: LiveOptions;
+}
+
+export interface TtyState {
+  stdinIsTTY: boolean;
+  stdoutIsTTY: boolean;
 }
 
 export type DashboardKey =
@@ -49,10 +55,30 @@ function parseInterval(value: string): number {
   return seconds;
 }
 
+/** True for the all-providers status view (`aa` or `aa status`). */
+export function isDefaultStatusCommand(args: string[]): boolean {
+  return args.length === 0 || (args.length === 1 && args[0] === "status");
+}
+
+/** Enter the live dashboard in a TTY unless `--once` was passed. */
+export function shouldRunLiveDashboard(
+  args: string[],
+  options: LiveOptions,
+  tty: TtyState = {
+    stdinIsTTY: Boolean(process.stdin.isTTY),
+    stdoutIsTTY: Boolean(process.stdout.isTTY),
+  },
+): boolean {
+  if (options.once) return false;
+  if (options.enabled) return true;
+  return isDefaultStatusCommand(args) && tty.stdoutIsTTY && tty.stdinIsTTY;
+}
+
 /** Pull global live-view flags out of a command without disturbing other arguments. */
 export function parseLiveArgs(args: string[]): ParsedLiveArgs {
   const remaining: string[] = [];
   let enabled = false;
+  let once = false;
   let intervalSeconds = DEFAULT_LIVE_INTERVAL_SECONDS;
   let hasInterval = false;
 
@@ -66,6 +92,10 @@ export function parseLiveArgs(args: string[]): ParsedLiveArgs {
       enabled = true;
       intervalSeconds = parseInterval(arg.slice("--live=".length));
       hasInterval = true;
+      continue;
+    }
+    if (arg === "--once") {
+      once = true;
       continue;
     }
     if (arg === "--interval") {
@@ -83,13 +113,19 @@ export function parseLiveArgs(args: string[]): ParsedLiveArgs {
     remaining.push(arg);
   }
 
-  if (hasInterval && !enabled) {
-    throw new Error("--interval can only be used together with --live.");
+  if (once && enabled) {
+    throw new Error("Use either --live or --once, not both.");
+  }
+  if (hasInterval && once) {
+    throw new Error("--interval cannot be used together with --once.");
+  }
+  if (hasInterval && !enabled && !isDefaultStatusCommand(remaining)) {
+    throw new Error("--interval can only be used with the live dashboard (`aa`, `aa status`, or --live).");
   }
 
   return {
     args: remaining,
-    options: { enabled, intervalSeconds },
+    options: { enabled, once, intervalSeconds },
   };
 }
 

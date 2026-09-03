@@ -13,10 +13,26 @@ function parseInterval(value) {
     }
     return seconds;
 }
+/** True for the all-providers status view (`aa` or `aa status`). */
+export function isDefaultStatusCommand(args) {
+    return args.length === 0 || (args.length === 1 && args[0] === "status");
+}
+/** Enter the live dashboard in a TTY unless `--once` was passed. */
+export function shouldRunLiveDashboard(args, options, tty = {
+    stdinIsTTY: Boolean(process.stdin.isTTY),
+    stdoutIsTTY: Boolean(process.stdout.isTTY),
+}) {
+    if (options.once)
+        return false;
+    if (options.enabled)
+        return true;
+    return isDefaultStatusCommand(args) && tty.stdoutIsTTY && tty.stdinIsTTY;
+}
 /** Pull global live-view flags out of a command without disturbing other arguments. */
 export function parseLiveArgs(args) {
     const remaining = [];
     let enabled = false;
+    let once = false;
     let intervalSeconds = DEFAULT_LIVE_INTERVAL_SECONDS;
     let hasInterval = false;
     for (let i = 0; i < args.length; i++) {
@@ -29,6 +45,10 @@ export function parseLiveArgs(args) {
             enabled = true;
             intervalSeconds = parseInterval(arg.slice("--live=".length));
             hasInterval = true;
+            continue;
+        }
+        if (arg === "--once") {
+            once = true;
             continue;
         }
         if (arg === "--interval") {
@@ -46,12 +66,18 @@ export function parseLiveArgs(args) {
         }
         remaining.push(arg);
     }
-    if (hasInterval && !enabled) {
-        throw new Error("--interval can only be used together with --live.");
+    if (once && enabled) {
+        throw new Error("Use either --live or --once, not both.");
+    }
+    if (hasInterval && once) {
+        throw new Error("--interval cannot be used together with --once.");
+    }
+    if (hasInterval && !enabled && !isDefaultStatusCommand(remaining)) {
+        throw new Error("--interval can only be used with the live dashboard (`aa`, `aa status`, or --live).");
     }
     return {
         args: remaining,
-        options: { enabled, intervalSeconds },
+        options: { enabled, once, intervalSeconds },
     };
 }
 export function interpretKey(input, raw) {
