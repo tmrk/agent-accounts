@@ -1,6 +1,6 @@
 {
   "name": "agent-accounts",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Manage multiple Codex, Claude Code, and Grok Build accounts and usage",
   "author": "Tamas Marki",
   "type": "module",

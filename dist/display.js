@@ -82,12 +82,20 @@ function statusColor(remainingPercent) {
         return YELLOW;
     return GREEN;
 }
-/** Render a quota bar whose filled portion represents quota remaining. */
+/**
+ * Render a quota bar whose filled portion represents quota remaining.
+ * Fill and empty use the same glyph so every bar has the same visual width;
+ * without color the empty cells fall back to a lighter shade.
+ */
 function renderBar(usedPercent, width) {
     const remaining = Math.max(0, Math.min(100, 100 - usedPercent));
     const filled = Math.round((remaining / 100) * Math.max(0, width));
     const empty = Math.max(0, width - filled);
-    return `${statusColor(remaining)}${"█".repeat(filled)}${DIM}${"░".repeat(empty)}${RESET}`;
+    const head = "█".repeat(filled);
+    const tail = (COLOR_ENABLED ? "█" : "░").repeat(empty);
+    if (!COLOR_ENABLED)
+        return `${head}${tail}`;
+    return `${statusColor(remaining)}${head}${RESET}${DIM}${tail}${RESET}`;
 }
 function resetLabel(resetsIn) {
     return resetsIn ? `↻ ${resetsIn}` : "";
@@ -102,11 +110,11 @@ function quotaBarWidth(contentWidth, labelWidth, resetWidth) {
 function measureLayout(labels, resets, width) {
     let labelWidth = 8;
     for (const label of labels)
-        labelWidth = Math.max(labelWidth, label.length);
+        labelWidth = Math.max(labelWidth, visibleLength(label));
     labelWidth = Math.min(labelWidthCap(width), labelWidth);
     let resetWidth = 0;
     for (const reset of resets)
-        resetWidth = Math.max(resetWidth, resetLabel(reset).length);
+        resetWidth = Math.max(resetWidth, visibleLength(resetLabel(reset)));
     const contentWidth = Math.max(8, width - 4);
     if (quotaBarWidth(contentWidth, labelWidth, resetWidth) < 4)
         resetWidth = 0;
@@ -115,15 +123,15 @@ function measureLayout(labels, resets, width) {
 function printQuota(frame, row, layout) {
     const contentWidth = frame.width - 4;
     const remaining = Math.max(0, 100 - row.usedPercent);
-    const displayLabel = row.label.length > layout.labelWidth ? "Usage" : row.label;
-    if (row.label.length > layout.labelWidth)
+    const displayLabel = visibleLength(row.label) > layout.labelWidth ? "Usage" : row.label;
+    if (visibleLength(row.label) > layout.labelWidth)
         printDetail(frame, "Limit", row.label, layout);
     const prefix = `  ${fitLabel(displayLabel, layout.labelWidth)} `;
     const percent = `${remaining.toFixed(1).padStart(5)}% left`;
-    const barWidth = Math.max(3, quotaBarWidth(contentWidth, layout.labelWidth, layout.resetWidth));
     const reset = layout.resetWidth > 0
-        ? `${" ".repeat(RESET_GAP)}${resetLabel(row.resetsIn).padEnd(layout.resetWidth)}`
+        ? `${" ".repeat(RESET_GAP)}${padVisible(resetLabel(row.resetsIn), layout.resetWidth)}`
         : "";
+    const barWidth = Math.max(3, contentWidth - visibleLength(prefix) - BAR_GAP - visibleLength(percent) - visibleLength(reset));
     frame.content(`${DIM}${prefix}${RESET}${renderBar(row.usedPercent, barWidth)}${" ".repeat(BAR_GAP)}${statusColor(remaining)}${percent}${RESET}${DIM}${reset}${RESET}`);
     if (layout.resetWidth === 0 && row.resetsIn) {
         printDetail(frame, "", `↻ resets in ${row.resetsIn}`, layout);

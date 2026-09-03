@@ -30,6 +30,32 @@ SGR_COLOR = {
     33: "yellow",
     36: "cyan",
     37: "white",
+    90: "dim",
+}
+
+# Same-sized cells for every density so quota bars share left and right edges.
+BLOCK_DENSITY = {
+    "█": 1.0,
+    "▓": 0.75,
+    "▒": 0.45,
+    "░": 0.22,
+}
+
+# Light/heavy box drawing mapped onto a cell-centered line grid.
+BOX_KIND = {
+    "─": "h",
+    "━": "h",
+    "│": "v",
+    "┃": "v",
+    "╭": "tl",
+    "╮": "tr",
+    "╰": "bl",
+    "╯": "br",
+    "├": "vr",
+    "┤": "vl",
+    "┬": "hb",
+    "┴": "ht",
+    "┼": "x",
 }
 
 
@@ -75,30 +101,85 @@ def cell_color(style: dict) -> tuple[int, int, int, int]:
     return PALETTE[style["color"]]
 
 
-def measure_font(font: ImageFont.FreeTypeFont) -> tuple[int, int, int]:
+def mix(fg: tuple[int, int, int, int], bg: tuple[int, int, int, int], t: float) -> tuple[int, int, int, int]:
+    return tuple(int(f * t + b * (1 - t)) for f, b in zip(fg[:3], bg[:3])) + (255,)
+
+
+def measure_font(font: ImageFont.FreeTypeFont) -> tuple[int, int]:
     ascent, descent = font.getmetrics()
-    bbox = font.getbbox("M")
-    return bbox[2] - bbox[0], ascent + descent + 4, ascent
+    cell_w = max(1, round(font.getlength("M")))
+    return cell_w, ascent + descent + 4
+
+
+def draw_box(
+    draw: ImageDraw.ImageDraw,
+    x: int,
+    y: int,
+    cell_w: int,
+    cell_h: int,
+    kind: str,
+    color: tuple[int, int, int, int],
+) -> None:
+    x1 = x + cell_w - 1
+    y1 = y + cell_h - 1
+    cx = x + cell_w // 2
+    cy = y + cell_h // 2
+
+    def hline(x0: int, x2: int) -> None:
+        draw.line([(x0, cy), (x2, cy)], fill=color, width=1)
+
+    def vline(y0: int, y2: int) -> None:
+        draw.line([(cx, y0), (cx, y2)], fill=color, width=1)
+
+    if "h" in kind or kind in {"tl", "tr", "bl", "br", "vl", "vr", "x"}:
+        if kind == "h":
+            hline(x, x1)
+        elif kind in {"tl", "bl", "vr"}:
+            hline(cx, x1)
+        elif kind in {"tr", "br", "vl"}:
+            hline(x, cx)
+        elif kind in {"ht", "hb", "x"}:
+            hline(x, x1)
+    if "v" in kind or kind in {"tl", "tr", "bl", "br", "ht", "hb", "x"}:
+        if kind == "v":
+            vline(y, y1)
+        elif kind in {"tl", "tr", "hb"}:
+            vline(cy, y1)
+        elif kind in {"bl", "br", "ht"}:
+            vline(y, cy)
+        elif kind in {"vl", "vr", "x"}:
+            vline(y, y1)
 
 
 def render_frame(lines: list[str], dest: Path) -> None:
     font = ImageFont.truetype(FONT_PATH, FONT_SIZE)
-    cell_w, cell_h, ascent = measure_font(font)
+    cell_w, cell_h = measure_font(font)
     cols = max((len(parse_ansi(line)) for line in lines), default=1)
     rows = max(len(lines), 1)
     pad = 20
     im = Image.new("RGBA", (cols * cell_w + pad * 2, rows * cell_h + pad * 2), PALETTE["bg"])
     draw = ImageDraw.Draw(im)
+    inset = 3
     for row, line in enumerate(lines):
         for col, (ch, style) in enumerate(parse_ansi(line)):
+            x = pad + col * cell_w
+            y = pad + row * cell_h
+            color = cell_color(style)
+            density = BLOCK_DENSITY.get(ch)
+            if density is not None:
+                fill = color if density >= 0.99 else mix(color, PALETTE["bg"], density)
+                draw.rectangle(
+                    [x, y + inset, x + cell_w - 1, y + cell_h - 1 - inset],
+                    fill=fill,
+                )
+                continue
+            kind = BOX_KIND.get(ch)
+            if kind is not None:
+                draw_box(draw, x, y, cell_w, cell_h, kind, color)
+                continue
             if ch == " ":
                 continue
-            draw.text(
-                (pad + col * cell_w, pad + row * cell_h + ascent),
-                ch,
-                font=font,
-                fill=cell_color(style),
-            )
+            draw.text((x, y + 2), ch, font=font, fill=color, anchor="lt")
     im.save(dest)
 
 

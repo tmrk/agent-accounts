@@ -111,8 +111,33 @@ test("keeps provider identity, quota, and zero-value billing details visible", (
   assert.match(output, /On-demand\s+\$0 \/ \$0/);
 });
 
-test("aligns quota bars and percent columns across rows", () => {
-  const lines = visible(renderCodexUsage([
+function barSpan(line) {
+  const start = [...line].findIndex(ch => ch === "█" || ch === "░");
+  if (start < 0) return null;
+  const chars = [...line];
+  let end = start;
+  while (end < chars.length && (chars[end] === "█" || chars[end] === "░")) end += 1;
+  return { start, end, width: end - start };
+}
+
+function assertQuotaGrid(lines) {
+  const quota = lines.filter(line => line.includes("% left"));
+  assert.ok(quota.length >= 2, lines.join("\n"));
+  const spans = quota.map(barSpan);
+  assert.ok(spans.every(Boolean), quota.join("\n"));
+  assert.equal(new Set(spans.map(span => span.start)).size, 1, quota.join("\n"));
+  assert.equal(new Set(spans.map(span => span.end)).size, 1, quota.join("\n"));
+  assert.equal(new Set(spans.map(span => span.width)).size, 1, quota.join("\n"));
+  assert.equal(new Set(quota.map(line => line.indexOf("% left"))).size, 1, quota.join("\n"));
+  const resets = quota.filter(line => line.includes("↻"));
+  if (resets.length) {
+    assert.equal(resets.length, quota.length, quota.join("\n"));
+    assert.equal(new Set(resets.map(line => line.indexOf("↻"))).size, 1, quota.join("\n"));
+  }
+}
+
+const combinedSample = () => ({
+  codex: [
     sampleCodex(),
     {
       email: "other@example.com",
@@ -121,47 +146,49 @@ test("aligns quota bars and percent columns across rows", () => {
       primary: { usedPercent: 90, windowMinutes: 300, resetsIn: "12m" },
       secondary: { usedPercent: 10, windowMinutes: 10080, resetsIn: "6d 11h" },
     },
-  ], { width: 88, tight: true }));
-  const quota = lines.filter(line => line.includes("% left"));
-  assert.ok(quota.length >= 4, quota.join("\n"));
-  const barCol = line => {
-    const filled = line.indexOf("█");
-    const empty = line.indexOf("░");
-    if (filled < 0) return empty;
-    if (empty < 0) return filled;
-    return Math.min(filled, empty);
-  };
-  assert.equal(new Set(quota.map(barCol)).size, 1, quota.join("\n"));
-  assert.equal(new Set(quota.map(line => line.indexOf("% left"))).size, 1, quota.join("\n"));
+  ],
+  claude: [{
+    name: "work",
+    isActive: true,
+    createdAt: "2026-01-01T00:00:00Z",
+    auth: { loggedIn: true, email: "a@example.com", subscriptionType: "pro" },
+    usage: {
+      five_hour: { utilization: 10, resets_at: "2099-01-01T00:00:00Z" },
+      seven_day: { utilization: 40, resets_at: "2099-01-04T00:00:00Z" },
+    },
+  }],
+  grok: [{
+    name: "studio",
+    isActive: false,
+    createdAt: "2026-01-01T00:00:00Z",
+    auth: { key: "account", auth_mode: "oidc", user_id: "u1", email: "b@example.net" },
+    usage: {
+      config: {
+        creditUsagePercent: 40,
+        currentPeriod: { type: "week", end: "2099-02-01T00:00:00Z" },
+        prepaidBalance: { val: 1250 },
+        onDemandUsed: { val: 80 },
+        onDemandCap: { val: 2000 },
+      },
+    },
+  }],
+});
+
+test("aligns quota bars and percent columns across rows", () => {
+  const lines = visible(renderCodexUsage(combinedSample().codex, { width: 88, tight: true }));
+  assertQuotaGrid(lines);
 });
 
 test("keeps combined-dashboard quota columns aligned across providers", () => {
-  const lines = visible(renderCombinedUsage({
-    codex: [sampleCodex()],
-    claude: [{
-      name: "work",
-      isActive: true,
-      createdAt: "2026-01-01T00:00:00Z",
-      auth: { loggedIn: true, email: "a@example.com", subscriptionType: "pro" },
-      usage: { five_hour: { utilization: 10, resets_at: "2099-01-01T00:00:00Z" } },
-    }],
-    grok: [{
-      name: "studio",
-      isActive: false,
-      createdAt: "2026-01-01T00:00:00Z",
-      auth: { key: "account", auth_mode: "oidc", user_id: "u1", email: "b@example.net" },
-      usage: {
-        config: {
-          creditUsagePercent: 40,
-          currentPeriod: { type: "week", end: "2099-02-01T00:00:00Z" },
-        },
-      },
-    }],
-  }, { width: 88, numbered: true, tight: true }));
-  const quota = lines.filter(line => line.includes("% left"));
-  const barCol = line => Math.min(...["█", "░"].map(ch => line.indexOf(ch)).filter(i => i >= 0));
-  assert.ok(quota.length >= 3, quota.join("\n"));
-  assert.equal(new Set(quota.map(barCol)).size, 1, quota.join("\n"));
+  const lines = visible(renderCombinedUsage(combinedSample(), { width: 88, numbered: true, tight: true }));
+  assertQuotaGrid(lines);
+  assert.match(lines.join("\n"), /Weekly limit/);
+  assert.match(lines.join("\n"), /Prepaid credits/);
+});
+
+test("keeps quota bar edges aligned in a narrow combined dashboard", () => {
+  const lines = visible(renderCombinedUsage(combinedSample(), { width: 52, numbered: true, tight: true }));
+  assertQuotaGrid(lines);
 });
 
 test("clips a live frame to the terminal height without using a full clear", () => {
