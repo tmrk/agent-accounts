@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Draw ANSI dashboard frames onto a pixel grid so box drawing stays aligned."""
+"""Draw ANSI dashboard frames onto a pixel-aligned terminal grid.
+
+Text is placed on a shared baseline (not each glyph's ink top), so punctuation
+stays on the line instead of jumping into the apostrophe position. Block
+elements and box drawing are painted as geometry so quota bars share edges.
+"""
 
 from __future__ import annotations
 
@@ -10,7 +15,9 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"
+BOLD_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf"
 FONT_SIZE = 16
+SCALE = 2
 
 PALETTE = {
     "bg": (0, 0, 0, 255),
@@ -105,10 +112,11 @@ def mix(fg: tuple[int, int, int, int], bg: tuple[int, int, int, int], t: float) 
     return tuple(int(f * t + b * (1 - t)) for f, b in zip(fg[:3], bg[:3])) + (255,)
 
 
-def measure_font(font: ImageFont.FreeTypeFont) -> tuple[int, int]:
+def measure_font(font: ImageFont.FreeTypeFont) -> tuple[int, int, int, int]:
     ascent, descent = font.getmetrics()
     cell_w = max(1, round(font.getlength("M")))
-    return cell_w, ascent + descent + 4
+    cell_h = ascent + descent + 4 * SCALE
+    return cell_w, cell_h, ascent, descent
 
 
 def draw_box(
@@ -119,6 +127,7 @@ def draw_box(
     cell_h: int,
     kind: str,
     color: tuple[int, int, int, int],
+    stroke: int,
 ) -> None:
     x1 = x + cell_w - 1
     y1 = y + cell_h - 1
@@ -126,10 +135,10 @@ def draw_box(
     cy = y + cell_h // 2
 
     def hline(x0: int, x2: int) -> None:
-        draw.line([(x0, cy), (x2, cy)], fill=color, width=1)
+        draw.line([(x0, cy), (x2, cy)], fill=color, width=stroke)
 
     def vline(y0: int, y2: int) -> None:
-        draw.line([(cx, y0), (cx, y2)], fill=color, width=1)
+        draw.line([(cx, y0), (cx, y2)], fill=color, width=stroke)
 
     if "h" in kind or kind in {"tl", "tr", "bl", "br", "vl", "vr", "x"}:
         if kind == "h":
@@ -152,14 +161,16 @@ def draw_box(
 
 
 def render_frame(lines: list[str], dest: Path) -> None:
-    font = ImageFont.truetype(FONT_PATH, FONT_SIZE)
-    cell_w, cell_h = measure_font(font)
+    font = ImageFont.truetype(FONT_PATH, FONT_SIZE * SCALE)
+    bold_font = ImageFont.truetype(BOLD_PATH, FONT_SIZE * SCALE)
+    cell_w, cell_h, ascent, _descent = measure_font(font)
     cols = max((len(parse_ansi(line)) for line in lines), default=1)
     rows = max(len(lines), 1)
-    pad = 20
+    pad = 20 * SCALE
     im = Image.new("RGBA", (cols * cell_w + pad * 2, rows * cell_h + pad * 2), PALETTE["bg"])
     draw = ImageDraw.Draw(im)
-    inset = 3
+    inset = 3 * SCALE
+    stroke = max(1, SCALE)
     for row, line in enumerate(lines):
         for col, (ch, style) in enumerate(parse_ansi(line)):
             x = pad + col * cell_w
@@ -175,11 +186,15 @@ def render_frame(lines: list[str], dest: Path) -> None:
                 continue
             kind = BOX_KIND.get(ch)
             if kind is not None:
-                draw_box(draw, x, y, cell_w, cell_h, kind, color)
+                draw_box(draw, x, y, cell_w, cell_h, kind, color, stroke)
                 continue
             if ch == " ":
                 continue
-            draw.text((x, y + 2), ch, font=font, fill=color, anchor="lt")
+            face = bold_font if style["bold"] else font
+            # Alphabetic baseline, shared by every glyph in the row.
+            draw.text((x, y + ascent), ch, font=face, fill=color, anchor="la")
+    if SCALE > 1:
+        im = im.resize((im.width // SCALE, im.height // SCALE), Image.Resampling.LANCZOS)
     im.save(dest)
 
 
