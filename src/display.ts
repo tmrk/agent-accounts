@@ -30,7 +30,19 @@ export interface RenderOptions {
   startIndex?: number;
   /** Omit the blank line before a section (used when composing a live frame). */
   tight?: boolean;
+  labelWidth?: number;
+  resetWidth?: number;
 }
+
+interface ColumnLayout {
+  labelWidth: number;
+  resetWidth: number;
+}
+
+const PERCENT_FIELD = 11;
+const LABEL_GUTTER = 3;
+const BAR_GAP = 2;
+const RESET_GAP = 2;
 
 function resolveWidth(options?: RenderOptions): number {
   return options?.width ?? dashboardWidth();
@@ -114,33 +126,53 @@ interface QuotaRow {
   resetsIn?: string;
 }
 
-function printQuota(frame: Frame, row: QuotaRow, labelWidth: number): void {
-  const contentWidth = frame.width - 4;
-  const remaining = Math.max(0, 100 - row.usedPercent);
-  let displayLabel = row.label;
-  if (displayLabel.length > labelWidth) {
-    printDetail(frame, "Limit", displayLabel, labelWidth);
-    displayLabel = "Usage";
-  }
-  const prefix = `  ${displayLabel.padEnd(labelWidth)} `;
-  const percent = `${remaining.toFixed(1).padStart(5)}% left`;
-  let reset = row.resetsIn ? ` · ↻ ${row.resetsIn}` : "";
-  let barWidth = contentWidth - prefix.length - percent.length - reset.length - 2;
-
-  let wrappedReset: string | undefined;
-  if (barWidth < 6 && reset) {
-    wrappedReset = row.resetsIn;
-    reset = "";
-    barWidth = contentWidth - prefix.length - percent.length - 2;
-  }
-  barWidth = Math.max(3, barWidth);
-  frame.content(`${DIM}${prefix}${RESET}${renderBar(row.usedPercent, barWidth)}  ${statusColor(remaining)}${percent}${RESET}${DIM}${reset}${RESET}`);
-  if (wrappedReset) frame.content(`${DIM}${" ".repeat(prefix.length)}↻ resets in ${wrappedReset}${RESET}`);
+function resetLabel(resetsIn?: string): string {
+  return resetsIn ? `↻ ${resetsIn}` : "";
 }
 
-function printDetail(frame: Frame, label: string, value: string, labelWidth: number): void {
+function fitLabel(label: string, width: number): string {
+  return visibleLength(label) <= width ? label.padEnd(width) : truncateVisible(label, width);
+}
+
+function quotaBarWidth(contentWidth: number, labelWidth: number, resetWidth: number): number {
+  const resetSpace = resetWidth > 0 ? RESET_GAP + resetWidth : 0;
+  return contentWidth - LABEL_GUTTER - labelWidth - BAR_GAP - PERCENT_FIELD - resetSpace;
+}
+
+function measureLayout(labels: string[], resets: (string | undefined)[], width: number): ColumnLayout {
+  let labelWidth = 8;
+  for (const label of labels) labelWidth = Math.max(labelWidth, label.length);
+  labelWidth = Math.min(labelWidthCap(width), labelWidth);
+  let resetWidth = 0;
+  for (const reset of resets) resetWidth = Math.max(resetWidth, resetLabel(reset).length);
+  const contentWidth = Math.max(8, width - 4);
+  if (quotaBarWidth(contentWidth, labelWidth, resetWidth) < 4) resetWidth = 0;
+  return { labelWidth, resetWidth };
+}
+
+function printQuota(frame: Frame, row: QuotaRow, layout: ColumnLayout): void {
   const contentWidth = frame.width - 4;
-  const prefix = `  ${label.padEnd(labelWidth)} `;
+  const remaining = Math.max(0, 100 - row.usedPercent);
+  const displayLabel = row.label.length > layout.labelWidth ? "Usage" : row.label;
+  if (row.label.length > layout.labelWidth) printDetail(frame, "Limit", row.label, layout);
+  const prefix = `  ${fitLabel(displayLabel, layout.labelWidth)} `;
+  const percent = `${remaining.toFixed(1).padStart(5)}% left`;
+  const barWidth = Math.max(3, quotaBarWidth(contentWidth, layout.labelWidth, layout.resetWidth));
+  const reset = layout.resetWidth > 0
+    ? `${" ".repeat(RESET_GAP)}${resetLabel(row.resetsIn).padEnd(layout.resetWidth)}`
+    : "";
+  frame.content(
+    `${DIM}${prefix}${RESET}${renderBar(row.usedPercent, barWidth)}${" ".repeat(BAR_GAP)}${statusColor(remaining)}${percent}${RESET}${DIM}${reset}${RESET}`,
+  );
+  if (layout.resetWidth === 0 && row.resetsIn) {
+    printDetail(frame, "", `↻ resets in ${row.resetsIn}`, layout);
+  }
+}
+
+function printDetail(frame: Frame, label: string, value: string, layout: ColumnLayout | number): void {
+  const labelWidth = typeof layout === "number" ? layout : layout.labelWidth;
+  const contentWidth = frame.width - 4;
+  const prefix = `  ${fitLabel(label, labelWidth)} `;
   const available = Math.max(1, contentWidth - prefix.length);
   const lines = wrapText(value, available);
   for (let i = 0; i < lines.length; i++) {
@@ -240,27 +272,31 @@ function collectRows(usage: AccountUsage): QuotaRow[] {
   return rows;
 }
 
-function renderApiKeySpend(frame: Frame, snapshot: ApiKeyUsageSnapshot, labelWidth: number): void {
+function renderApiKeySpend(frame: Frame, snapshot: ApiKeyUsageSnapshot, layout: ColumnLayout): void {
   const scope = snapshot.projectId ? `project ${snapshot.projectName ?? snapshot.projectId}` : "organization-wide";
-  printDetail(frame, "Scope", `${scope} · via ${snapshot.adminKeyLabel} · ${fmtAge(snapshot.fetchedAt)}`, labelWidth);
+  printDetail(frame, "Scope", `${scope} · via ${snapshot.adminKeyLabel} · ${fmtAge(snapshot.fetchedAt)}`, layout);
   const today = `${snapshot.todayCostEstimated ? "~" : ""}${fmtUsd(snapshot.todayUsd)} · ${fmtTokens(snapshot.todayTokens)} tokens${snapshot.todayCostEstimated ? " · estimated" : ""}`;
-  printDetail(frame, "Today", today, labelWidth);
-  printDetail(frame, "7 days", `${fmtUsd(snapshot.weekUsd)} · ${fmtTokens(snapshot.weekTokens)} tokens`, labelWidth);
-  printDetail(frame, "30 days", `${fmtUsd(snapshot.monthUsd)} · ${fmtTokens(snapshot.monthTokens)} tokens`, labelWidth);
+  printDetail(frame, "Today", today, layout);
+  printDetail(frame, "7 days", `${fmtUsd(snapshot.weekUsd)} · ${fmtTokens(snapshot.weekTokens)} tokens`, layout);
+  printDetail(frame, "30 days", `${fmtUsd(snapshot.monthUsd)} · ${fmtTokens(snapshot.monthTokens)} tokens`, layout);
   if (snapshot.topModel && snapshot.topModel.tokens > 0) {
-    printDetail(frame, "Top model", `${snapshot.topModel.model} · ${fmtTokens(snapshot.topModel.tokens)} tokens / 30d`, labelWidth);
+    printDetail(frame, "Top model", `${snapshot.topModel.model} · ${fmtTokens(snapshot.topModel.tokens)} tokens / 30d`, layout);
   }
 }
 
-function codexLabelWidth(usages: AccountUsage[], width: number): number {
-  let label = "Top model".length;
+function collectCodexLayout(usages: AccountUsage[]): { labels: string[]; resets: (string | undefined)[] } {
+  const labels = ["Top model", "Next pick", "Credits", "Scope", "Today", "7 days", "30 days"];
+  const resets: (string | undefined)[] = [];
   for (const usage of usages) {
-    for (const row of collectRows(usage)) label = Math.max(label, row.label.length);
+    for (const row of collectRows(usage)) {
+      labels.push(row.label);
+      resets.push(row.resetsIn);
+    }
   }
-  return Math.min(labelWidthCap(width), label);
+  return { labels, resets };
 }
 
-function displayAccount(frame: Frame, usage: AccountUsage, labelWidth: number, index?: number): void {
+function displayAccount(frame: Frame, usage: AccountUsage, layout: ColumnLayout, index?: number): void {
   printAccountHeader(frame, formatDisplayName(usage.email), {
     index,
     plan: usage.planType,
@@ -271,12 +307,12 @@ function displayAccount(frame: Frame, usage: AccountUsage, labelWidth: number, i
     printError(frame, usage.error);
     return;
   }
-  if (usage.gtoReason) printDetail(frame, "Next pick", usage.gtoReason, labelWidth);
-  for (const row of collectRows(usage)) printQuota(frame, row, labelWidth);
+  if (usage.gtoReason) printDetail(frame, "Next pick", usage.gtoReason, layout);
+  for (const row of collectRows(usage)) printQuota(frame, row, layout);
   if (usage.credits) {
-    printDetail(frame, "Credits", usage.credits.unlimited ? "Unlimited" : `$${usage.credits.balance ?? "0"}`, labelWidth);
+    printDetail(frame, "Credits", usage.credits.unlimited ? "Unlimited" : `$${usage.credits.balance ?? "0"}`, layout);
   }
-  if (usage.apiKeySpend) renderApiKeySpend(frame, usage.apiKeySpend, labelWidth);
+  if (usage.apiKeySpend) renderApiKeySpend(frame, usage.apiKeySpend, layout);
   else if (usage.apiKeyHint) printNote(frame, usage.apiKeyHint);
 }
 
@@ -289,10 +325,13 @@ function renderCodex(usages: AccountUsage[], options: RenderOptions): string[] {
   if (usages.length === 0) {
     printNote(frame, "No accounts configured · run 'aa codex add'");
   } else {
-    const labelWidth = codexLabelWidth(usages, width);
+    const measured = collectCodexLayout(usages);
+    const layout = options.labelWidth !== undefined && options.resetWidth !== undefined
+      ? { labelWidth: options.labelWidth, resetWidth: options.resetWidth }
+      : measureLayout(measured.labels, measured.resets, width);
     for (let i = 0; i < usages.length; i++) {
       if (i > 0) frame.divider();
-      displayAccount(frame, usages[i]!, labelWidth, numbered ? startIndex + i : undefined);
+      displayAccount(frame, usages[i]!, layout, numbered ? startIndex + i : undefined);
     }
   }
   frame.sectionEnd();
@@ -377,15 +416,19 @@ function collectClaudeRows(profile: ClaudeProfileInfo): QuotaRow[] {
   return rows;
 }
 
-function claudeLabelWidth(profiles: ClaudeProfileInfo[], width: number): number {
-  let label = "Identity".length;
+function collectClaudeLayout(profiles: ClaudeProfileInfo[]): { labels: string[]; resets: (string | undefined)[] } {
+  const labels = ["Identity"];
+  const resets: (string | undefined)[] = [];
   for (const profile of profiles) {
-    for (const row of collectClaudeRows(profile)) label = Math.max(label, row.label.length);
+    for (const row of collectClaudeRows(profile)) {
+      labels.push(row.label);
+      resets.push(row.resetsIn);
+    }
   }
-  return Math.min(labelWidthCap(width), label);
+  return { labels, resets };
 }
 
-function displayClaudeProfile(frame: Frame, profile: ClaudeProfileInfo, labelWidth: number, index?: number): void {
+function displayClaudeProfile(frame: Frame, profile: ClaudeProfileInfo, layout: ColumnLayout, index?: number): void {
   printAccountHeader(frame, profile.name, { index, plan: profile.auth?.subscriptionType, active: profile.isActive });
   if (profile.error) {
     printError(frame, profile.error);
@@ -396,9 +439,9 @@ function displayClaudeProfile(frame: Frame, profile: ClaudeProfileInfo, labelWid
     return;
   }
   const identity = [profile.auth.email, profile.auth.orgName].filter(Boolean).join(" · ");
-  if (identity && identity !== profile.name) printDetail(frame, "Identity", identity, labelWidth);
+  if (identity && identity !== profile.name) printDetail(frame, "Identity", identity, layout);
   const rows = collectClaudeRows(profile);
-  for (const row of rows) printQuota(frame, row, labelWidth);
+  for (const row of rows) printQuota(frame, row, layout);
   if (rows.length === 0 && !identity) printNote(frame, "Usage data unavailable");
   if (profile.usageError) {
     const cached = rows.length > 0 && profile.usageCachedAt ? ` · cached ${fmtAge(profile.usageCachedAt)}` : "";
@@ -415,10 +458,13 @@ function renderClaude(profiles: ClaudeProfileInfo[], options: RenderOptions): st
   if (profiles.length === 0) {
     printNote(frame, "No profiles configured · run 'aa claude add'");
   } else {
-    const labelWidth = claudeLabelWidth(profiles, width);
+    const measured = collectClaudeLayout(profiles);
+    const layout = options.labelWidth !== undefined && options.resetWidth !== undefined
+      ? { labelWidth: options.labelWidth, resetWidth: options.resetWidth }
+      : measureLayout(measured.labels, measured.resets, width);
     for (let i = 0; i < profiles.length; i++) {
       if (i > 0) frame.divider();
-      displayClaudeProfile(frame, profiles[i]!, labelWidth, numbered ? startIndex + i : undefined);
+      displayClaudeProfile(frame, profiles[i]!, layout, numbered ? startIndex + i : undefined);
     }
   }
   frame.sectionEnd();
@@ -453,13 +499,30 @@ function grokPeriodLabel(profile: GrokProfileInfo): string {
   return "Usage limit";
 }
 
-function grokLabelWidth(profiles: GrokProfileInfo[], width: number): number {
-  let label = "Prepaid credits".length;
-  for (const profile of profiles) label = Math.max(label, grokPeriodLabel(profile).length);
-  return Math.min(labelWidthCap(width), label);
+function grokQuotaRow(profile: GrokProfileInfo): QuotaRow | undefined {
+  const usedPercent = grokUsedPercent(profile);
+  if (usedPercent === null) return undefined;
+  const resetsAt = profile.usage?.config?.currentPeriod?.end ?? profile.usage?.config?.billingPeriodEnd;
+  return {
+    label: grokPeriodLabel(profile),
+    usedPercent: Math.max(0, Math.min(100, usedPercent)),
+    resetsIn: resetsAt ? formatResetTime(resetsAt) : undefined,
+  };
 }
 
-function displayGrokProfile(frame: Frame, profile: GrokProfileInfo, labelWidth: number, index?: number): void {
+function collectGrokLayout(profiles: GrokProfileInfo[]): { labels: string[]; resets: (string | undefined)[] } {
+  const labels = ["Identity", "Prepaid credits", "On-demand"];
+  const resets: (string | undefined)[] = [];
+  for (const profile of profiles) {
+    const row = grokQuotaRow(profile);
+    if (!row) continue;
+    labels.push(row.label);
+    resets.push(row.resetsIn);
+  }
+  return { labels, resets };
+}
+
+function displayGrokProfile(frame: Frame, profile: GrokProfileInfo, layout: ColumnLayout, index?: number): void {
   printAccountHeader(frame, profile.name, { index, plan: profile.usage?.subscriptionTier, active: profile.isActive });
   if (profile.error) {
     printError(frame, profile.error);
@@ -470,25 +533,18 @@ function displayGrokProfile(frame: Frame, profile: GrokProfileInfo, labelWidth: 
     return;
   }
   const identity = [profile.auth.email, profile.auth.organization_name ?? profile.auth.team_name].filter(Boolean).join(" · ");
-  if (identity && identity !== profile.name) printDetail(frame, "Identity", identity, labelWidth);
-  const usedPercent = grokUsedPercent(profile);
-  if (usedPercent !== null) {
-    const resetsAt = profile.usage?.config?.currentPeriod?.end ?? profile.usage?.config?.billingPeriodEnd;
-    printQuota(frame, {
-      label: grokPeriodLabel(profile),
-      usedPercent: Math.max(0, Math.min(100, usedPercent)),
-      resetsIn: resetsAt ? formatResetTime(resetsAt) : undefined,
-    }, labelWidth);
-  }
+  if (identity && identity !== profile.name) printDetail(frame, "Identity", identity, layout);
+  const quota = grokQuotaRow(profile);
+  if (quota) printQuota(frame, quota, layout);
   const prepaid = profile.usage?.config?.prepaidBalance?.val;
-  if (prepaid !== undefined) printDetail(frame, "Prepaid credits", fmtUsd(prepaid / 100), labelWidth);
+  if (prepaid !== undefined) printDetail(frame, "Prepaid credits", fmtUsd(prepaid / 100), layout);
   const onDemandUsed = profile.usage?.config?.onDemandUsed?.val;
   const onDemandCap = profile.usage?.config?.onDemandCap?.val;
   if (onDemandUsed !== undefined || onDemandCap !== undefined) {
     const cap = onDemandCap !== undefined ? ` / ${fmtUsd(onDemandCap / 100)}` : "";
-    printDetail(frame, "On-demand", `${fmtUsd((onDemandUsed ?? 0) / 100)}${cap}`, labelWidth);
+    printDetail(frame, "On-demand", `${fmtUsd((onDemandUsed ?? 0) / 100)}${cap}`, layout);
   }
-  if (usedPercent === null && prepaid === undefined && onDemandUsed === undefined && !identity) printNote(frame, "Usage data unavailable");
+  if (!quota && prepaid === undefined && onDemandUsed === undefined && !identity) printNote(frame, "Usage data unavailable");
 }
 
 function renderGrok(profiles: GrokProfileInfo[], options: RenderOptions): string[] {
@@ -500,10 +556,13 @@ function renderGrok(profiles: GrokProfileInfo[], options: RenderOptions): string
   if (profiles.length === 0) {
     printNote(frame, "No profiles configured · run 'aa grok add'");
   } else {
-    const labelWidth = grokLabelWidth(profiles, width);
+    const measured = collectGrokLayout(profiles);
+    const layout = options.labelWidth !== undefined && options.resetWidth !== undefined
+      ? { labelWidth: options.labelWidth, resetWidth: options.resetWidth }
+      : measureLayout(measured.labels, measured.resets, width);
     for (let i = 0; i < profiles.length; i++) {
       if (i > 0) frame.divider();
-      displayGrokProfile(frame, profiles[i]!, labelWidth, numbered ? startIndex + i : undefined);
+      displayGrokProfile(frame, profiles[i]!, layout, numbered ? startIndex + i : undefined);
     }
   }
   frame.sectionEnd();
@@ -534,17 +593,26 @@ export function renderCombinedUsage(data: CombinedUsage, options: RenderOptions 
   const tight = options.tight ?? false;
   const lines: string[] = [];
   let nextIndex = options.startIndex ?? 1;
+  const codex = collectCodexLayout(data.codex);
+  const claude = collectClaudeLayout(data.claude);
+  const grok = collectGrokLayout(data.grok);
+  const layout = measureLayout(
+    [...codex.labels, ...claude.labels, ...grok.labels],
+    [...codex.resets, ...claude.resets, ...grok.resets],
+    width,
+  );
 
   const push = (section: string[]) => {
     if (lines.length && section[0] !== "") lines.push("");
     lines.push(...section);
   };
 
-  push(renderCodex(data.codex, { width, numbered, startIndex: nextIndex, tight: true }));
+  const shared = { width, numbered, tight: true, labelWidth: layout.labelWidth, resetWidth: layout.resetWidth };
+  push(renderCodex(data.codex, { ...shared, startIndex: nextIndex }));
   if (numbered) nextIndex += data.codex.length;
-  push(renderClaude(data.claude, { width, numbered, startIndex: nextIndex, tight: true }));
+  push(renderClaude(data.claude, { ...shared, startIndex: nextIndex }));
   if (numbered) nextIndex += data.claude.length;
-  push(renderGrok(data.grok, { width, numbered, startIndex: nextIndex, tight: true }));
+  push(renderGrok(data.grok, { ...shared, startIndex: nextIndex }));
 
   if (!tight && lines[0] !== "") lines.unshift("");
   return lines;

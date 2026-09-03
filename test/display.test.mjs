@@ -111,6 +111,59 @@ test("keeps provider identity, quota, and zero-value billing details visible", (
   assert.match(output, /On-demand\s+\$0 \/ \$0/);
 });
 
+test("aligns quota bars and percent columns across rows", () => {
+  const lines = visible(renderCodexUsage([
+    sampleCodex(),
+    {
+      email: "other@example.com",
+      isActive: false,
+      planType: "team",
+      primary: { usedPercent: 90, windowMinutes: 300, resetsIn: "12m" },
+      secondary: { usedPercent: 10, windowMinutes: 10080, resetsIn: "6d 11h" },
+    },
+  ], { width: 88, tight: true }));
+  const quota = lines.filter(line => line.includes("% left"));
+  assert.ok(quota.length >= 4, quota.join("\n"));
+  const barCol = line => {
+    const filled = line.indexOf("█");
+    const empty = line.indexOf("░");
+    if (filled < 0) return empty;
+    if (empty < 0) return filled;
+    return Math.min(filled, empty);
+  };
+  assert.equal(new Set(quota.map(barCol)).size, 1, quota.join("\n"));
+  assert.equal(new Set(quota.map(line => line.indexOf("% left"))).size, 1, quota.join("\n"));
+});
+
+test("keeps combined-dashboard quota columns aligned across providers", () => {
+  const lines = visible(renderCombinedUsage({
+    codex: [sampleCodex()],
+    claude: [{
+      name: "work",
+      isActive: true,
+      createdAt: "2026-01-01T00:00:00Z",
+      auth: { loggedIn: true, email: "a@example.com", subscriptionType: "pro" },
+      usage: { five_hour: { utilization: 10, resets_at: "2099-01-01T00:00:00Z" } },
+    }],
+    grok: [{
+      name: "studio",
+      isActive: false,
+      createdAt: "2026-01-01T00:00:00Z",
+      auth: { key: "account", auth_mode: "oidc", user_id: "u1", email: "b@example.net" },
+      usage: {
+        config: {
+          creditUsagePercent: 40,
+          currentPeriod: { type: "week", end: "2099-02-01T00:00:00Z" },
+        },
+      },
+    }],
+  }, { width: 88, numbered: true, tight: true }));
+  const quota = lines.filter(line => line.includes("% left"));
+  const barCol = line => Math.min(...["█", "░"].map(ch => line.indexOf(ch)).filter(i => i >= 0));
+  assert.ok(quota.length >= 3, quota.join("\n"));
+  assert.equal(new Set(quota.map(barCol)).size, 1, quota.join("\n"));
+});
+
 test("clips a live frame to the terminal height without using a full clear", () => {
   const body = renderCodexUsage([sampleCodex()], { width: 40, numbered: true, tight: true });
   const frame = visible(composeDashboardFrame(body, {

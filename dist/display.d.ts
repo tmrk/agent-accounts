@@ -6,6 +6,8 @@ export interface RenderOptions {
     startIndex?: number;
     /** Omit the blank line before a section (used when composing a live frame). */
     tight?: boolean;
+    labelWidth?: number;
+    resetWidth?: number;
 }
 export declare function renderCodexUsage(usages: AccountUsage[], options?: RenderOptions): string[];
 export declare function displayAllUsage(usages: AccountUsage[]): void;

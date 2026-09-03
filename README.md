@@ -6,7 +6,11 @@ Manage multiple accounts and see usage for the three major coding-agent CLIs:
 - Anthropic Claude Code
 - xAI Grok Build
 
-Each provider keeps its own isolated credentials. Account usage is fetched in parallel within each provider, and switching does not sign other stored accounts out.
+Each provider keeps its own isolated credentials. Account usage is fetched in parallel within each provider, and switching does not sign other stored accounts out. You can store as many Codex, Claude Code, and Grok Build accounts as you want.
+
+![Usage dashboard](docs/screenshots/dashboard-wide.png)
+
+The screenshot is a fictional demo (made-up emails and usage), not a live account dump.
 
 ## Install
 
@@ -61,11 +65,9 @@ nine). Selecting the account that is already active — including the only accou
 provider — is a no-op. Press `r` to refresh now, or `q` / Esc / Ctrl-C to quit. API-key spend
 remains backed by its slower billing cache.
 
-The screenshots below are a fictional demo (made-up emails and usage), not a live account dump.
+A narrower terminal reflows the same data:
 
-![Wide terminal dashboard](docs/screenshots/dashboard-wide.png)
-
-![Narrow terminal dashboard](docs/screenshots/dashboard-narrow.png)
+![Narrow usage dashboard](docs/screenshots/dashboard-narrow.png)
 
 ## Codex
 

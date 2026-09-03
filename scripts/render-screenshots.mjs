@@ -47,10 +47,25 @@ const demo = {
         seven_day: { utilization: 41, resets_at: "2026-09-07T09:00:00Z" },
       },
     },
+    {
+      name: "personal",
+      isActive: false,
+      createdAt: "2026-03-04T00:00:00Z",
+      auth: {
+        loggedIn: true,
+        email: "sam.home@example.org",
+        orgName: "Example Org",
+        subscriptionType: "max",
+      },
+      usage: {
+        five_hour: { utilization: 62, resets_at: "2026-09-03T16:10:00Z" },
+        seven_day: { utilization: 28, resets_at: "2026-09-08T12:00:00Z" },
+      },
+    },
   ],
   grok: [
     {
-      name: "personal",
+      name: "studio",
       isActive: false,
       createdAt: "2026-02-02T00:00:00Z",
       auth: {
@@ -71,6 +86,28 @@ const demo = {
         },
       },
     },
+    {
+      name: "lab",
+      isActive: true,
+      createdAt: "2026-04-18T00:00:00Z",
+      auth: {
+        key: "account",
+        auth_mode: "oidc",
+        user_id: "user-lab",
+        email: "riley.lab@contoso.test",
+        organization_name: "Contoso Research",
+      },
+      usage: {
+        subscriptionTier: "GrokPro",
+        config: {
+          creditUsagePercent: 67,
+          currentPeriod: { type: "USAGE_PERIOD_TYPE_MONTHLY", end: "2026-09-30T00:00:00Z" },
+          prepaidBalance: { val: 0 },
+          onDemandUsed: { val: 400 },
+          onDemandCap: { val: 1500 },
+        },
+      },
+    },
   ],
 };
 
@@ -88,7 +125,6 @@ function writePng(name, lines) {
   const out = join(outDir, `dashboard-${name}.png`);
   const result = spawnSync("python3", [renderer], {
     input: JSON.stringify({
-      title: "aa",
       lines,
       out,
     }),
@@ -104,9 +140,9 @@ function writePng(name, lines) {
 mkdirSync(outDir, { recursive: true });
 writePng("wide", renderShot({
   width: 88,
-  help: "1-4 switch · r refresh · q quit",
+  help: "1-6 switch · r refresh · q quit",
 }));
 writePng("narrow", renderShot({
   width: 52,
-  help: "1-4 switch · r refresh · q quit",
+  help: "1-6 switch · r refresh · q quit",
 }));
