@@ -18,6 +18,12 @@ FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"
 BOLD_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf"
 FONT_SIZE = 16
 SCALE = 2
+# Deliberately fixed terminal geometry.  Keeping these dimensions integral at
+# both render and output scale prevents columns from alternating between pixel
+# widths after downsampling.
+CELL_WIDTH = 10
+CELL_HEIGHT = 23
+PADDING = 20
 
 PALETTE = {
     "bg": (0, 0, 0, 255),
@@ -112,11 +118,30 @@ def mix(fg: tuple[int, int, int, int], bg: tuple[int, int, int, int], t: float) 
     return tuple(int(f * t + b * (1 - t)) for f, b in zip(fg[:3], bg[:3])) + (255,)
 
 
-def measure_font(font: ImageFont.FreeTypeFont) -> tuple[int, int, int, int]:
-    ascent, descent = font.getmetrics()
-    cell_w = max(1, round(font.getlength("M")))
-    cell_h = ascent + descent + 4 * SCALE
-    return cell_w, cell_h, ascent, descent
+def validate_glyphs(
+    chars: set[str],
+    font: ImageFont.FreeTypeFont,
+    bold_font: ImageFont.FreeTypeFont,
+    cell_w: int,
+    cell_h: int,
+    baseline: int,
+) -> None:
+    """Fail rather than emit a screenshot whose text escapes its cell grid."""
+    for face_name, face in (("regular", font), ("bold", bold_font)):
+        for ch in chars:
+            if ch == " " or ch in BLOCK_DENSITY or ch in BOX_KIND:
+                continue
+            left, top, right, bottom = face.getbbox(ch, anchor="ls")
+            if left < 0 or right > cell_w:
+                raise ValueError(
+                    f"{face_name} glyph {ch!r} exceeds the {cell_w}px cell width: "
+                    f"{(left, top, right, bottom)}"
+                )
+            if baseline + top < 0 or baseline + bottom > cell_h:
+                raise ValueError(
+                    f"{face_name} glyph {ch!r} exceeds the {cell_h}px row height: "
+                    f"{(left, top, right, bottom)} at baseline {baseline}"
+                )
 
 
 def draw_box(
@@ -163,16 +188,31 @@ def draw_box(
 def render_frame(lines: list[str], dest: Path) -> None:
     font = ImageFont.truetype(FONT_PATH, FONT_SIZE * SCALE)
     bold_font = ImageFont.truetype(BOLD_PATH, FONT_SIZE * SCALE)
-    cell_w, cell_h, ascent, _descent = measure_font(font)
-    cols = max((len(parse_ansi(line)) for line in lines), default=1)
+    cell_w = CELL_WIDTH * SCALE
+    cell_h = CELL_HEIGHT * SCALE
+    ascent, descent = font.getmetrics()
+    leading = cell_h - ascent - descent
+    if leading < 0:
+        raise ValueError("font metrics exceed the fixed terminal row height")
+    baseline = leading // 2 + ascent
+    parsed_lines = [parse_ansi(line) for line in lines]
+    validate_glyphs(
+        {ch for line in parsed_lines for ch, _style in line},
+        font,
+        bold_font,
+        cell_w,
+        cell_h,
+        baseline,
+    )
+    cols = max((len(line) for line in parsed_lines), default=1)
     rows = max(len(lines), 1)
-    pad = 20 * SCALE
+    pad = PADDING * SCALE
     im = Image.new("RGBA", (cols * cell_w + pad * 2, rows * cell_h + pad * 2), PALETTE["bg"])
     draw = ImageDraw.Draw(im)
     inset = 3 * SCALE
     stroke = max(1, SCALE)
-    for row, line in enumerate(lines):
-        for col, (ch, style) in enumerate(parse_ansi(line)):
+    for row, line in enumerate(parsed_lines):
+        for col, (ch, style) in enumerate(line):
             x = pad + col * cell_w
             y = pad + row * cell_h
             color = cell_color(style)
@@ -191,8 +231,9 @@ def render_frame(lines: list[str], dest: Path) -> None:
             if ch == " ":
                 continue
             face = bold_font if style["bold"] else font
-            # Alphabetic baseline, shared by every glyph in the row.
-            draw.text((x, y + ascent), ch, font=face, fill=color, anchor="la")
+            # Pillow's `s` anchor is the baseline.  `a` means ascender and was
+            # the source of text dropping into the following terminal row.
+            draw.text((x, y + baseline), ch, font=face, fill=color, anchor="ls")
     if SCALE > 1:
         im = im.resize((im.width // SCALE, im.height // SCALE), Image.Resampling.LANCZOS)
     im.save(dest)

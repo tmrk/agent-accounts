@@ -118,7 +118,7 @@ function renderShot({ width, help }) {
     updatedAt: new Date("2026-09-03T14:32:08Z"),
     intervalSeconds: 30,
     help,
-  }, { columns: width, rows: body.length + 2 });
+  }, { columns: width, rows: body.length + 3 });
 }
 
 function writePng(name, lines) {

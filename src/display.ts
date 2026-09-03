@@ -661,7 +661,9 @@ export function composeDashboardFrame(
   const footer = `${DIM}${message}${RESET}`;
 
   const frame: string[] = [padVisible(header, width)];
-  const bodyBudget = Math.max(0, rows - 2);
+  const hasHeaderSpacer = rows >= 3;
+  if (hasHeaderSpacer) frame.push(" ".repeat(width));
+  const bodyBudget = Math.max(0, rows - (hasHeaderSpacer ? 3 : 2));
   const clipped = clipBody(body, bodyBudget, width);
   for (const line of clipped) frame.push(padVisible(line, width));
   frame.push(padVisible(footer, width));
