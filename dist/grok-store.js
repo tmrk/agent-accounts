@@ -231,7 +231,7 @@ function runGrokRefresh(instancePath) {
 export async function fetchGrokUsageForPath(instancePath) {
     let auth = readGrokAuth(instancePath);
     if (!auth)
-        throw new Error("Not logged in. Run 'aa grok add' to authenticate this profile.");
+        throw new Error("Not logged in. Run 'aacc grok add' to authenticate this profile.");
     try {
         return { auth, usage: await fetchGrokUsage(auth) };
     }

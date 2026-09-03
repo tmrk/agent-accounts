@@ -262,7 +262,7 @@ function runGrokRefresh(instancePath: string): Promise<void> {
 /** Retry once after asking Grok itself to refresh its isolated OAuth session. */
 export async function fetchGrokUsageForPath(instancePath: string): Promise<{ auth: GrokAuth; usage: GrokBillingResponse }> {
   let auth = readGrokAuth(instancePath);
-  if (!auth) throw new Error("Not logged in. Run 'aa grok add' to authenticate this profile.");
+  if (!auth) throw new Error("Not logged in. Run 'aacc grok add' to authenticate this profile.");
   try {
     return { auth, usage: await fetchGrokUsage(auth) };
   } catch (error) {

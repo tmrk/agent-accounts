@@ -37,7 +37,7 @@ export type NumberCommit = {
 } | {
     type: "invalid";
 };
-/** True for the all-providers status view (`aa` or `aa status`). */
+/** True for the all-providers status view (`aacc` or `aacc status`). */
 export declare function isDefaultStatusCommand(args: string[]): boolean;
 /** Enter the live dashboard in a TTY unless `--once` was passed. */
 export declare function shouldRunLiveDashboard(args: string[], options: LiveOptions, tty?: TtyState): boolean;

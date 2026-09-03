@@ -20,22 +20,22 @@ import { questionOrEscape } from "./interactive.js";
 import { alreadyActiveOutcome, type SwitchOutcome } from "./live.js";
 import type { GrokProfileInfo } from "./types.js";
 
-const HELP = `aa grok - Manage multiple Grok Build accounts
+const HELP = `aacc grok - Manage multiple Grok Build accounts
 
 Usage:
-  aa grok                         Show profiles and switch interactively
-  aa grok add [name]              Add account with browser OAuth
-  aa grok add [name] --device-auth
-  aa grok list                    List profiles with Grok Build usage
-  aa grok switch [name]           Switch the active profile
-  aa grok remove <name>           Remove a profile and its isolated home
-  aa grok env                     Print export GROK_HOME=...
-  aa grok run [name] [...]        Launch Grok Build with a profile
-  aa grok <name> [...]            Shorthand for 'aa grok run <name>'
-  aa grok help                    Show this help
+  aacc grok                         Show profiles and switch interactively
+  aacc grok add [name]              Add account with browser OAuth
+  aacc grok add [name] --device-auth
+  aacc grok list                    List profiles with Grok Build usage
+  aacc grok switch [name]           Switch the active profile
+  aacc grok remove <name>           Remove a profile and its isolated home
+  aacc grok env                     Print export GROK_HOME=...
+  aacc grok run [name] [...]        Launch Grok Build with a profile
+  aacc grok <name> [...]            Shorthand for 'aacc grok run <name>'
+  aacc grok help                    Show this help
 
 Shell integration (add to ~/.zshrc or ~/.bashrc):
-  eval "$(aa grok env)"
+  eval "$(aacc grok env)"
 `;
 
 interface AddArgs {
@@ -111,7 +111,7 @@ async function cmdAdd(args: string[]): Promise<void> {
     const validationError = validateGrokProfileName(name);
     if (validationError) throw new Error(validationError);
     if (findGrokProfile(name)) {
-      throw new Error(`Profile "${name}" already exists. Remove it first with 'aa grok remove ${name}'.`);
+      throw new Error(`Profile "${name}" already exists. Remove it first with 'aacc grok remove ${name}'.`);
     }
   }
 
@@ -151,7 +151,7 @@ async function cmdAdd(args: string[]): Promise<void> {
   setActiveGrokProfile(profileName);
   const identity = auth.email ? ` (${auth.email})` : "";
   console.log(`\nAdded Grok Build profile "${profileName}".${identity}`);
-  console.log(`  aa grok run ${profileName}      Launch Grok Build with this account`);
+  console.log(`  aacc grok run ${profileName}      Launch Grok Build with this account`);
 }
 
 export async function grokStatus(): Promise<void> {
@@ -176,7 +176,7 @@ export function activateGrokProfile(name: string): SwitchOutcome {
   return {
     status: "switched",
     label: selected,
-    hint: `eval "$(aa grok env)"`,
+    hint: `eval "$(aacc grok env)"`,
   };
 }
 
@@ -188,13 +188,13 @@ async function cmdSwitch(name?: string): Promise<void> {
     return;
   }
   console.log(`Active Grok Build profile: ${result.label}`);
-  console.log(`Run 'eval "$(aa grok env)"' to select it in this shell, or 'aa grok run ${result.label}'.`);
+  console.log(`Run 'eval "$(aacc grok env)"' to select it in this shell, or 'aacc grok run ${result.label}'.`);
 }
 
 async function cmdPromptSwitch(): Promise<void> {
   const infos = await loadGrokProfiles();
   if (infos.length === 0) {
-    console.log("No Grok Build profiles. Run 'aa grok add' to create one.");
+    console.log("No Grok Build profiles. Run 'aacc grok add' to create one.");
     return;
   }
   displayGrokProfilesNumbered(infos);
@@ -205,7 +205,7 @@ async function cmdPromptSwitch(): Promise<void> {
 }
 
 function cmdRemove(name: string): void {
-  if (!name) throw new Error("Usage: aa grok remove <name>");
+  if (!name) throw new Error("Usage: aacc grok remove <name>");
   if (!removeGrokProfile(name)) throw new Error(`Grok Build profile "${name}" not found.`);
   console.log(`Removed Grok Build profile: ${name}`);
 }
@@ -264,6 +264,6 @@ export async function grokMain(args: string[]): Promise<void> {
       return;
     default:
       if (findGrokProfile(command)) return cmdRun(command, args.slice(1));
-      throw new Error(`Unknown command: aa grok ${command}\n\n${HELP}`);
+      throw new Error(`Unknown command: aacc grok ${command}\n\n${HELP}`);
   }
 }

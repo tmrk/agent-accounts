@@ -40,7 +40,7 @@ test("rejects invalid or conflicting live flags", () => {
   assert.throws(() => parseLiveArgs(["--live", "--once"]), /either --live or --once/);
 });
 
-test("opens the dashboard for a TTY aa, and a snapshot with --once", () => {
+test("opens the dashboard for a TTY aacc, and a snapshot with --once", () => {
   const tty = { stdinIsTTY: true, stdoutIsTTY: true };
   const parsed = parseLiveArgs([]);
   assert.equal(shouldRunLiveDashboard(parsed.args, parsed.options, tty), true);

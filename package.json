@@ -1,6 +1,6 @@
 {
   "name": "agent-accounts",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Manage multiple Codex, Claude Code, and Grok Build accounts and usage",
   "author": "Tamas Marki <16718845+tmrk@users.noreply.github.com>",
   "type": "module",
@@ -22,7 +22,7 @@
     "accounts"
   ],
   "bin": {
-    "aa": "dist/index.js",
+    "aacc": "dist/index.js",
     "agent-accounts": "dist/index.js"
   },
   "scripts": {

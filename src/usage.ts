@@ -51,7 +51,7 @@ export function isInvalidatedAuthMessage(message: string): boolean {
 export function formatAuthError(err: unknown): string {
   const message = err instanceof Error ? err.message : String(err);
   if (isInvalidatedAuthMessage(message)) {
-    return "Session ended. Re-add this account with `aa codex add --device-auth` and sign in as this ChatGPT user.";
+    return "Session ended. Re-add this account with `aacc codex add --device-auth` and sign in as this ChatGPT user.";
   }
   return message;
 }
@@ -64,7 +64,7 @@ function isUnauthorizedError(err: unknown): boolean {
 /** Fetch usage for a single (already-refreshed) auth credential */
 export async function fetchUsage(auth: CodexAuthFile): Promise<UsageResponse> {
   if (!auth.tokens) {
-    throw new Error("Cannot fetch ChatGPT usage for an API-key account; use 'aa codex usage' instead.");
+    throw new Error("Cannot fetch ChatGPT usage for an API-key account; use 'aacc codex usage' instead.");
   }
   const headers: Record<string, string> = {
     Authorization: `Bearer ${auth.tokens.access_token}`,

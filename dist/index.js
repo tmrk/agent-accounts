@@ -20,40 +20,40 @@ import { runCodexLogin } from "./codex-login.js";
 import { questionOrEscape } from "./interactive.js";
 import { alreadyActiveOutcome, parseLiveArgs, runLive, shouldRunLiveDashboard } from "./live.js";
 const USAGE_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
-const HELP = `agent-accounts (aa) - Manage Codex, Claude Code, and Grok Build accounts
+const HELP = `agent-accounts (aacc) - Manage Codex, Claude Code, and Grok Build accounts
 
 Usage:
-  aa                         Live usage dashboard (TTY) / snapshot (non-TTY)
-  aa status                  Same as aa
-  aa --once                  One-shot snapshot even in a TTY
-  aa --interval 10           Live dashboard, refresh every 10s
-  aa --live                  Same dashboard (explicit)
-  aa status --live --interval 10
-  aa codex [command]         Manage Codex accounts
-  aa claude [command]        Manage Claude Code accounts
-  aa grok [command]          Manage Grok Build accounts
+  aacc                         Live usage dashboard (TTY) / snapshot (non-TTY)
+  aacc status                  Same as aacc
+  aacc --once                  One-shot snapshot even in a TTY
+  aacc --interval 10           Live dashboard, refresh every 10s
+  aacc --live                  Same dashboard (explicit)
+  aacc status --live --interval 10
+  aacc codex [command]         Manage Codex accounts
+  aacc claude [command]        Manage Claude Code accounts
+  aacc grok [command]          Manage Grok Build accounts
 
 Codex commands:
-  aa codex                   Show Codex usage and switch
-  aa codex add [--device-auth]
-  aa codex add-key           Add an API-key account
-  aa codex import            Import ~/.codex/auth.json
-  aa codex list
-  aa codex switch [email]
-  aa codex gui-switch [email]
-  aa codex remove <email>
-  aa codex usage [days]      Show API spend (default 30 days)
+  aacc codex                   Show Codex usage and switch
+  aacc codex add [--device-auth]
+  aacc codex add-key           Add an API-key account
+  aacc codex import            Import ~/.codex/auth.json
+  aacc codex list
+  aacc codex switch [email]
+  aacc codex gui-switch [email]
+  aacc codex remove <email>
+  aacc codex usage [days]      Show API spend (default 30 days)
 
 Provider help:
-  aa claude help
-  aa grok help
+  aacc claude help
+  aacc grok help
 
-The original flat Codex commands (for example, \`aa add\`) remain aliases.
+The original flat Codex commands (for example, \`aacc add\`) remain aliases.
 `;
 async function cmdAdd(options = { deviceAuth: false }) {
     // Save current active auth before we switch the live Codex home.
     syncActiveToStore();
-    const loginHome = mkdtempSync(join(tmpdir(), "aa-codex-login-"));
+    const loginHome = mkdtempSync(join(tmpdir(), "aacc-codex-login-"));
     console.log(options.deviceAuth
         ? "Opening Codex device-code login in an isolated home...\n"
         : "Opening Codex OAuth login in an isolated home...\n");
@@ -171,12 +171,12 @@ async function cmdAddAdminKey() {
     };
     saveAdminKey(entry);
     console.log(`Added admin key: ${trimmedLabel}`);
-    console.log(`Run 'aa usage' to fetch spend, or 'aa attach-project <api-key>' to scope it per project.`);
+    console.log(`Run 'aacc usage' to fetch spend, or 'aacc attach-project <api-key>' to scope it per project.`);
 }
 async function cmdListAdminKeys() {
     const all = listAdminKeys();
     if (all.length === 0) {
-        console.log("No admin keys. Run 'aa add-admin-key' to add one.");
+        console.log("No admin keys. Run 'aacc add-admin-key' to add one.");
         return;
     }
     console.log();
@@ -199,7 +199,7 @@ async function cmdAttachProject(apiKeyLabel, opts) {
     const identifier = apiKeyLabel.startsWith("apikey:") ? apiKeyLabel : `apikey:${apiKeyLabel}`;
     const account = findAccount(identifier);
     if (!account) {
-        console.error(`No API-key account named "${apiKeyLabel}". Use 'aa list' to see all.`);
+        console.error(`No API-key account named "${apiKeyLabel}". Use 'aacc list' to see all.`);
         process.exit(1);
     }
     if (account.auth.auth_mode !== "apikey") {
@@ -208,7 +208,7 @@ async function cmdAttachProject(apiKeyLabel, opts) {
     }
     const admin = pickAdminKeyFor(account);
     if (!admin) {
-        console.error("No admin key configured. Run 'aa add-admin-key' first.");
+        console.error("No admin key configured. Run 'aacc add-admin-key' first.");
         process.exit(1);
     }
     process.stdout.write("Listing OpenAI projects... ");
@@ -308,12 +308,12 @@ async function cmdUsage(daysArg) {
     }
     const accounts = listAccounts().filter(a => a.auth.auth_mode === "apikey");
     if (accounts.length === 0) {
-        console.log("No API-key accounts. Run 'aa add-key' first.");
+        console.log("No API-key accounts. Run 'aacc add-key' first.");
         return;
     }
     const admins = listAdminKeys();
     if (admins.length === 0) {
-        console.error("No admin keys. Run 'aa add-admin-key' first.");
+        console.error("No admin keys. Run 'aacc add-admin-key' first.");
         process.exit(1);
     }
     console.log(`Fetching ${days}-day usage for ${accounts.length} API-key account(s) in parallel...`);
@@ -329,7 +329,7 @@ async function cmdUsage(daysArg) {
                 email: account.email,
                 isActive: account.email === activeEmail,
                 planType: "api key",
-                apiKeyHint: "no admin key linked - run 'aa add-admin-key'",
+                apiKeyHint: "no admin key linked - run 'aacc add-admin-key'",
             };
         }
         const t0 = Date.now();
@@ -362,7 +362,7 @@ let lastBackgroundRefreshSpawnAt = 0;
 /**
  * If any API-key account has stale (or no) cache and an admin key exists,
  * spawn a detached child to refresh in the background. The parent does not
- * wait. Next `aa` invocation reads the updated cache.
+ * wait. Next `aacc` invocation reads the updated cache.
  */
 function maybeSpawnBackgroundRefresh() {
     if (Date.now() - lastBackgroundRefreshSpawnAt < USAGE_REFRESH_AFTER_MS)
@@ -436,7 +436,7 @@ function apiKeyUsageFromCache(account, isActive, admins) {
             email: account.email,
             isActive,
             planType: "api key",
-            apiKeyHint: "no admin key - run 'aa add-admin-key' to enable spend display",
+            apiKeyHint: "no admin key - run 'aacc add-admin-key' to enable spend display",
         };
     }
     const admin = pickAdminKeyFor(account) ?? admins[0];
@@ -455,7 +455,7 @@ function apiKeyUsageFromCache(account, isActive, admins) {
         email: account.email,
         isActive,
         planType: "api key",
-        apiKeyHint: `no cached usage - run 'aa usage' (admin: ${admin.label})`,
+        apiKeyHint: `no cached usage - run 'aacc usage' (admin: ${admin.label})`,
     };
 }
 /** Import the currently active account from ~/.codex/auth.json without re-logging in */
@@ -682,7 +682,7 @@ async function cmdStatus() {
 async function cmdDefault(options = { restartCodexGui: false }) {
     const usages = await loadCodexUsages();
     if (usages.length === 0) {
-        console.log("No accounts configured. Run 'aa add' to add one.");
+        console.log("No accounts configured. Run 'aacc add' to add one.");
         return;
     }
     displayAllUsageNumbered(usages);
@@ -751,7 +751,7 @@ async function codexMain(args) {
         case "remove":
         case "rm":
             if (!args[1]) {
-                console.error("Usage: aa remove <email>");
+                console.error("Usage: aacc remove <email>");
                 process.exit(1);
             }
             await cmdRemove(args[1]);
@@ -771,14 +771,14 @@ async function codexMain(args) {
             break;
         case "remove-admin-key":
             if (!args[1]) {
-                console.error("Usage: aa remove-admin-key <label>");
+                console.error("Usage: aacc remove-admin-key <label>");
                 process.exit(1);
             }
             await cmdRemoveAdminKey(args[1]);
             break;
         case "attach-project": {
             if (!args[1]) {
-                console.error("Usage: aa attach-project <api-key-label> [--project-id <id-or-name>]");
+                console.error("Usage: aacc attach-project <api-key-label> [--project-id <id-or-name>]");
                 process.exit(1);
             }
             const flagIdx = args.indexOf("--project-id");
@@ -923,7 +923,7 @@ async function cmdLiveStatus(args, intervalSeconds) {
         });
         return;
     }
-    throw new Error("--live is supported by status views: aa status, aa codex status, aa claude status, or aa grok status.");
+    throw new Error("--live is supported by status views: aacc status, aacc codex status, aacc claude status, or aacc grok status.");
 }
 async function main() {
     const parsed = parseLiveArgs(process.argv.slice(2));

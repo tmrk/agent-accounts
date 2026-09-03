@@ -3,21 +3,21 @@ import { createProfile, listProfiles, findProfile, removeProfile, getActiveProfi
 import { displayClaudeProfiles, displayClaudeProfilesNumbered } from "./display.js";
 import { questionOrEscape } from "./interactive.js";
 import { alreadyActiveOutcome } from "./live.js";
-const HELP = `aa claude - Manage multiple Claude Code profiles
+const HELP = `aacc claude - Manage multiple Claude Code profiles
 
 Usage:
-  aa claude                     Show profiles and switch interactively
-  aa claude add [name]          Add account (opens OAuth login, infers email)
-  aa claude list                List all profiles with auth status
-  aa claude switch [name]       Switch active profile
-  aa claude remove <name>       Remove a profile
-  aa claude env                 Print export CLAUDE_CONFIG_DIR=...
-  aa claude run [name] [...]    Launch Claude with a specific profile
-  aa claude <name> [...]        Shorthand for 'aa claude run <name>'
-  aa claude help                Show this help
+  aacc claude                     Show profiles and switch interactively
+  aacc claude add [name]          Add account (opens OAuth login, infers email)
+  aacc claude list                List all profiles with auth status
+  aacc claude switch [name]       Switch active profile
+  aacc claude remove <name>       Remove a profile
+  aacc claude env                 Print export CLAUDE_CONFIG_DIR=...
+  aacc claude run [name] [...]    Launch Claude with a specific profile
+  aacc claude <name> [...]        Shorthand for 'aacc claude run <name>'
+  aacc claude help                Show this help
 
 Shell integration (add to ~/.zshrc or ~/.bashrc):
-  eval "$(aa claude env)"
+  eval "$(aacc claude env)"
 `;
 /** Fetch auth status, credentials, and usage for all profiles in parallel */
 export async function loadClaudeProfiles() {
@@ -103,7 +103,7 @@ async function cmdAdd(name) {
             process.exit(1);
         }
         if (findProfile(name)) {
-            console.error(`Profile "${name}" already exists. Remove first: aa claude remove ${name}`);
+            console.error(`Profile "${name}" already exists. Remove first: aacc claude remove ${name}`);
             process.exit(1);
         }
     }
@@ -157,8 +157,8 @@ async function cmdAdd(name) {
                 const displayEmail = auth.email ? ` (${auth.email})` : "";
                 const displayPlan = auth.subscriptionType ? ` [${auth.subscriptionType}]` : "";
                 console.log(`\nAdded Claude profile "${profileName}".${displayEmail}${displayPlan}`);
-                console.log(`\n  aa claude switch ${profileName}   Set as active profile`);
-                console.log(`  aa claude run ${profileName}      Launch Claude with this profile`);
+                console.log(`\n  aacc claude switch ${profileName}   Set as active profile`);
+                console.log(`  aacc claude run ${profileName}      Launch Claude with this profile`);
                 resolve();
             }
             else {
@@ -195,7 +195,7 @@ export function activateClaudeProfile(name) {
     return {
         status: "switched",
         label: selected,
-        hint: `eval "$(aa claude env)"`,
+        hint: `eval "$(aacc claude env)"`,
     };
 }
 async function cmdSwitch(name) {
@@ -216,12 +216,12 @@ async function cmdSwitch(name) {
     const instancePath = getInstancePath(result.label);
     console.log(`Active Claude profile: ${result.label}`);
     console.log(`\n  export CLAUDE_CONFIG_DIR=${instancePath}`);
-    console.log(`\nOr add to shell rc: eval "$(aa claude env)"`);
+    console.log(`\nOr add to shell rc: eval "$(aacc claude env)"`);
 }
 async function cmdPromptSwitch() {
     const infos = await loadClaudeProfiles();
     if (infos.length === 0) {
-        console.log("No profiles. Run 'aa claude add' to create one.");
+        console.log("No profiles. Run 'aacc claude add' to create one.");
         return;
     }
     displayClaudeProfilesNumbered(infos);
@@ -238,7 +238,7 @@ async function cmdPromptSwitch() {
 }
 async function cmdRemove(name) {
     if (!name) {
-        console.error("Usage: aa claude remove <name>");
+        console.error("Usage: aacc claude remove <name>");
         process.exit(1);
     }
     if (!findProfile(name)) {
@@ -260,7 +260,7 @@ async function cmdRun(name, extraArgs) {
     const profileName = name || getActiveProfile();
     if (!profileName) {
         console.error("No profile specified and no active profile set.");
-        console.error("Usage: aa claude run <name>");
+        console.error("Usage: aacc claude run <name>");
         process.exit(1);
     }
     if (!findProfile(profileName)) {
@@ -290,12 +290,12 @@ async function cmdRun(name, extraArgs) {
 async function cmdDefault() {
     const profiles = listProfiles();
     if (profiles.length === 0) {
-        console.log("No Claude profiles. Run 'aa claude add' to create one.");
+        console.log("No Claude profiles. Run 'aacc claude add' to create one.");
         return;
     }
     return cmdPromptSwitch();
 }
-/** Main router for 'aa claude ...' subcommands */
+/** Main router for 'aacc claude ...' subcommands */
 export async function claudeMain(args) {
     const cmd = args[0];
     if (!cmd)
@@ -330,7 +330,7 @@ export async function claudeMain(args) {
             if (findProfile(cmd)) {
                 return cmdRun(cmd, args.slice(1));
             }
-            console.error(`Unknown command: aa claude ${cmd}`);
+            console.error(`Unknown command: aacc claude ${cmd}`);
             console.log(HELP);
             process.exit(1);
     }

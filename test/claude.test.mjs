@@ -11,7 +11,7 @@ import {
 } from "../dist/claude-store.js";
 
 test("refreshes and atomically persists rotated Claude OAuth credentials", async () => {
-  const instancePath = mkdtempSync(join(tmpdir(), "aa-claude-refresh-"));
+  const instancePath = mkdtempSync(join(tmpdir(), "aacc-claude-refresh-"));
   const credentialPath = join(instancePath, ".credentials.json");
   const original = {
     claudeAiOauth: {

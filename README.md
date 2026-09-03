@@ -18,7 +18,7 @@ The screenshot is a fictional demo (made-up emails and usage), not a live accoun
 npm install -g agent-accounts
 ```
 
-This installs both `aa` and `agent-accounts`. Node.js 18+ is required, along with the provider CLIs you intend to use.
+This installs both `aacc` and `agent-accounts`. Node.js 18+ is required, along with the provider CLIs you intend to use.
 
 If your npm global bin directory is not on `PATH` (including the Raspberry Pi setup used to test this project), install into `~/.local`, which is already on `PATH`:
 
@@ -35,21 +35,21 @@ npm install -g github:tmrk/agent-accounts
 ## Quick start
 
 ```bash
-aa                                # live dashboard in a TTY (snapshot if piped)
-aa --once                         # one-shot snapshot even in a TTY
-aa --interval 10                  # live dashboard, refresh every 10s
-aa status --live                  # same dashboard (explicit --live)
+aacc                                # live dashboard in a TTY (snapshot if piped)
+aacc --once                         # one-shot snapshot even in a TTY
+aacc --interval 10                  # live dashboard, refresh every 10s
+aacc status --live                  # same dashboard (explicit --live)
 
-aa codex add --device-auth        # add a Codex account
-aa claude add                     # add a Claude Code account
-aa grok add --device-auth         # add a Grok Build account
+aacc codex add --device-auth        # add a Codex account
+aacc claude add                     # add a Claude Code account
+aacc grok add --device-auth         # add a Grok Build account
 
-aa codex                          # usage + interactive Codex switcher
-aa claude                         # usage + interactive Claude switcher
-aa grok                           # usage + interactive Grok switcher
+aacc codex                          # usage + interactive Codex switcher
+aacc claude                         # usage + interactive Claude switcher
+aacc grok                           # usage + interactive Grok switcher
 ```
 
-The original flat Codex commands remain aliases, so `aa add`, `aa switch`, and `aa usage` work too.
+The original flat Codex commands remain aliases, so `aacc add`, `aacc switch`, and `aacc usage` work too.
 
 The status view is a responsive terminal dashboard: each provider gets a compact section, account
 state and plan are grouped in the header, and quota bars represent the percentage remaining. The
@@ -57,10 +57,10 @@ layout adapts from narrow SSH sessions to wide terminals without dropping long i
 or recommendation details. Color is used in interactive terminals and omitted automatically when
 output is redirected; set `NO_COLOR=1` to disable it explicitly.
 
-In a TTY, `aa` itself is that dashboard: it fetches in the background, paints the new frame in
-place, and reflows immediately when the terminal is resized. Use `aa --once` (or pipe the
+In a TTY, `aacc` itself is that dashboard: it fetches in the background, paints the new frame in
+place, and reflows immediately when the terminal is resized. Use `aacc --once` (or pipe the
 output) for a one-shot snapshot. `--live` on a single provider still works, for example
-`aa codex --live`. Number keys select an account (type `12` then Enter if there are more than
+`aacc codex --live`. Number keys select an account (type `12` then Enter if there are more than
 nine). Selecting the account that is already active — including the only account on a
 provider — is a no-op. Press `r` to refresh now, or `q` / Esc / Ctrl-C to quit. API-key spend
 remains backed by its slower billing cache.
@@ -72,14 +72,14 @@ A narrower terminal reflows the same data:
 ## Codex
 
 ```bash
-aa codex add [--device-auth]      # isolated OAuth login
-aa codex add-key                  # API-key account
-aa codex import                   # import ~/.codex/auth.json
-aa codex list
-aa codex switch [email]
-aa codex gui-switch [email]       # switch and restart Codex.app on macOS
-aa codex remove <email>
-aa codex usage [days]             # API spend via an attached admin key
+aacc codex add [--device-auth]      # isolated OAuth login
+aacc codex add-key                  # API-key account
+aacc codex import                   # import ~/.codex/auth.json
+aacc codex list
+aacc codex switch [email]
+aacc codex gui-switch [email]       # switch and restart Codex.app on macOS
+aacc codex remove <email>
+aacc codex usage [days]             # API spend via an attached admin key
 ```
 
 Codex OAuth profiles show the rolling five-hour and weekly limits, extra applicable buckets, plan, and credit balance. API-key accounts can show daily, weekly, and monthly spend when an OpenAI admin key and project are attached.
@@ -87,12 +87,12 @@ Codex OAuth profiles show the rolling five-hour and weekly limits, extra applica
 ## Claude Code
 
 ```bash
-aa claude add [name]
-aa claude list
-aa claude switch [name]
-aa claude run [name] [...args]
-aa claude remove <name>
-aa claude env
+aacc claude add [name]
+aacc claude list
+aacc claude switch [name]
+aacc claude run [name] [...args]
+aacc claude remove <name>
+aacc claude env
 ```
 
 Claude profiles use separate `CLAUDE_CONFIG_DIR` directories and show five-hour, weekly, model-specific, and extra-usage limits when available.
@@ -100,20 +100,20 @@ Claude profiles use separate `CLAUDE_CONFIG_DIR` directories and show five-hour,
 To make the selected profile active for direct `claude` invocations:
 
 ```bash
-eval "$(aa claude env)"
+eval "$(aacc claude env)"
 ```
 
-Add that line to `.zshrc` or `.bashrc` if you want `aa claude switch` to control future shells automatically. `aa claude run <name>` needs no shell integration.
+Add that line to `.zshrc` or `.bashrc` if you want `aacc claude switch` to control future shells automatically. `aacc claude run <name>` needs no shell integration.
 
 ## Grok Build
 
 ```bash
-aa grok add [name] [--device-auth]
-aa grok list
-aa grok switch [name]
-aa grok run [name] [...args]
-aa grok remove <name>
-aa grok env
+aacc grok add [name] [--device-auth]
+aacc grok list
+aacc grok switch [name]
+aacc grok run [name] [...args]
+aacc grok remove <name>
+aacc grok env
 ```
 
 Grok profiles use separate `GROK_HOME` directories. They show the weekly or monthly included-credit pool, reset time, prepaid credits, on-demand usage, and subscription tier—the same account-wide data used by Grok Build's `/usage` view.
@@ -121,7 +121,7 @@ Grok profiles use separate `GROK_HOME` directories. They show the weekly or mont
 To make the selected profile active for direct `grok` invocations:
 
 ```bash
-eval "$(aa grok env)"
+eval "$(aacc grok env)"
 ```
 
 Grok Build officially supports `GROK_HOME`, browser OAuth, and `grok login --device-auth`; see the [Grok Build authentication guide](https://docs.x.ai/build/authentication) and [settings reference](https://docs.x.ai/build/settings).

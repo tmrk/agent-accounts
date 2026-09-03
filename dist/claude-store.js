@@ -336,9 +336,9 @@ export async function ensureFreshClaudeCredential(instancePath, credential, fetc
         return latest;
     const current = latest ?? credential;
     if (!current.refreshToken)
-        throw new Error("Claude OAuth token expired and no refresh token is available; run 'aa claude run' and /login");
+        throw new Error("Claude OAuth token expired and no refresh token is available; run 'aacc claude run' and /login");
     if (current.refreshTokenExpiresAt && current.refreshTokenExpiresAt <= Date.now()) {
-        throw new Error("Claude OAuth refresh token expired; run 'aa claude run' and /login");
+        throw new Error("Claude OAuth refresh token expired; run 'aacc claude run' and /login");
     }
     const scopes = current.scopes?.length ? current.scopes : DEFAULT_OAUTH_SCOPES;
     const res = await fetchImpl(OAUTH_TOKEN_URL, {

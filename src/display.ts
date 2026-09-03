@@ -330,7 +330,7 @@ function renderCodex(usages: AccountUsage[], options: RenderOptions): string[] {
   const startIndex = options.startIndex ?? 1;
   frame.sectionStart("Codex", usages.length, "account", options.tight ?? false);
   if (usages.length === 0) {
-    printNote(frame, "No accounts configured · run 'aa codex add'");
+    printNote(frame, "No accounts configured · run 'aacc codex add'");
   } else {
     const measured = collectCodexLayout(usages);
     const layout = options.labelWidth !== undefined && options.resetWidth !== undefined
@@ -364,7 +364,7 @@ export function renderAccountList(
   const frame = new Frame(resolveWidth(options));
   frame.sectionStart("Codex accounts", accounts.length, "account", options.tight ?? false);
   if (accounts.length === 0) {
-    printNote(frame, "No accounts configured · run 'aa codex add'");
+    printNote(frame, "No accounts configured · run 'aacc codex add'");
   } else {
     for (let i = 0; i < accounts.length; i++) {
       if (i > 0) frame.divider();
@@ -463,7 +463,7 @@ function renderClaude(profiles: ClaudeProfileInfo[], options: RenderOptions): st
   const startIndex = options.startIndex ?? 1;
   frame.sectionStart("Claude Code", profiles.length, "profile", options.tight ?? false);
   if (profiles.length === 0) {
-    printNote(frame, "No profiles configured · run 'aa claude add'");
+    printNote(frame, "No profiles configured · run 'aacc claude add'");
   } else {
     const measured = collectClaudeLayout(profiles);
     const layout = options.labelWidth !== undefined && options.resetWidth !== undefined
@@ -561,7 +561,7 @@ function renderGrok(profiles: GrokProfileInfo[], options: RenderOptions): string
   const startIndex = options.startIndex ?? 1;
   frame.sectionStart("Grok Build", profiles.length, "profile", options.tight ?? false);
   if (profiles.length === 0) {
-    printNote(frame, "No profiles configured · run 'aa grok add'");
+    printNote(frame, "No profiles configured · run 'aacc grok add'");
   } else {
     const measured = collectGrokLayout(profiles);
     const layout = options.labelWidth !== undefined && options.resetWidth !== undefined

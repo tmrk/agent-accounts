@@ -13,7 +13,7 @@ function parseInterval(value) {
     }
     return seconds;
 }
-/** True for the all-providers status view (`aa` or `aa status`). */
+/** True for the all-providers status view (`aacc` or `aacc status`). */
 export function isDefaultStatusCommand(args) {
     return args.length === 0 || (args.length === 1 && args[0] === "status");
 }
@@ -73,7 +73,7 @@ export function parseLiveArgs(args) {
         throw new Error("--interval cannot be used together with --once.");
     }
     if (hasInterval && !enabled && !isDefaultStatusCommand(remaining)) {
-        throw new Error("--interval can only be used with the live dashboard (`aa`, `aa status`, or --live).");
+        throw new Error("--interval can only be used with the live dashboard (`aacc`, `aacc status`, or --live).");
     }
     return {
         args: remaining,
