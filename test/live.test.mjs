@@ -91,5 +91,13 @@ test("restores the terminal and ends on a new line when leaving the dashboard", 
   const sequence = writes.join("");
   assert.match(sequence, /\x1b\[\?1049l/);
   assert.match(sequence, /\x1b\[\?25h/);
+  assert.match(sequence, /\x1b\[\?1l/);
   assert.match(sequence, /\r\n$/);
+});
+
+test("paints only the provided rows instead of filling the terminal with blanks", () => {
+  const sequence = paintFrame(["hello", "world"], { columns: 10, rows: 24 }, {
+    write() {},
+  });
+  assert.equal(sequence.split("\n").length - 1, 1);
 });

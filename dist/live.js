@@ -1,6 +1,6 @@
 import { emitKeypressEvents } from "node:readline";
 import { composeDashboardFrame } from "./display.js";
-import { dashboardWidth, enterDashboardScreen, leaveDashboardScreen, paintFrame, terminalSize, } from "./term.js";
+import { dashboardWidth, enterDashboardScreen, leaveDashboardScreen, paintFrame, restoreCookedMode, terminalSize, } from "./term.js";
 export const DEFAULT_LIVE_INTERVAL_SECONDS = 30;
 export const MIN_LIVE_INTERVAL_SECONDS = 5;
 export const MAX_LIVE_INTERVAL_SECONDS = 60 * 60;
@@ -262,18 +262,13 @@ export async function runLive(options) {
         }
     };
     emitKeypressEvents(stdin);
-    const canRaw = stdin.isTTY && typeof stdin.setRawMode === "function";
-    const previousRawMode = canRaw ? stdin.isRaw : undefined;
-    let rawEnabled = false;
     stdin.on("keypress", onKeypress);
     stdout.on("resize", onResize);
     process.on("SIGINT", stop);
     process.on("SIGTERM", stop);
     try {
-        if (canRaw) {
+        if (stdin.isTTY && typeof stdin.setRawMode === "function")
             stdin.setRawMode(true);
-            rawEnabled = true;
-        }
         stdin.resume();
         enterDashboardScreen(stdout);
         paint();
@@ -297,19 +292,7 @@ export async function runLive(options) {
         process.off("SIGTERM", stop);
         stdout.off("resize", onResize);
         stdin.off("keypress", onKeypress);
-        try {
-            if (rawEnabled)
-                stdin.setRawMode(previousRawMode ?? false);
-        }
-        catch {
-            // Ignore terminals that reject raw-mode changes during shutdown.
-        }
-        try {
-            stdin.pause();
-        }
-        catch {
-            // Ignore pause failures; the process is exiting.
-        }
+        restoreCookedMode(stdin);
         leaveDashboardScreen(stdout);
     }
 }

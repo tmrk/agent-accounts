@@ -1,5 +1,7 @@
 /** Terminal size, ANSI-aware clipping, and flicker-free frame painting. */
 
+import { spawnSync } from "node:child_process";
+
 const ANSI_PATTERN = /\x1b\[[0-9;]*m/g;
 
 export const MIN_DASHBOARD_WIDTH = 24;
@@ -17,6 +19,8 @@ export const SYNC_START = "\x1b[?2026h";
 export const SYNC_END = "\x1b[?2026l";
 export const CURSOR_HOME = "\x1b[H";
 export const ERASE_DOWN = "\x1b[J";
+export const NORMAL_CURSOR_KEYS = "\x1b[?1l\x1b>";
+export const DISABLE_MOUSE = "\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l";
 
 export interface ViewSize {
   columns: number;
@@ -96,11 +100,8 @@ export function paintFrame(
 ): string {
   const rows = Math.max(1, size.rows);
   const columns = Math.max(1, size.columns);
-  const body: string[] = [];
-  for (let row = 0; row < rows; row++) {
-    const line = padVisible(lines[row] ?? "", columns);
-    body.push(row === rows - 1 ? line : `${line}\n`);
-  }
+  const visible = lines.slice(0, rows).map(line => padVisible(line, columns));
+  const body = visible.map((line, index) => index === visible.length - 1 ? line : `${line}\n`);
   const sequence = `${SYNC_START}${CURSOR_HOME}${body.join("")}${ERASE_DOWN}${SYNC_END}`;
   output.write(sequence);
   return sequence;
@@ -111,7 +112,28 @@ export function enterDashboardScreen(output: { write(chunk: string): unknown } =
 }
 
 export function leaveDashboardScreen(output: { write(chunk: string): unknown } = process.stdout): void {
-  // Leave the alternate screen first so cursor/wrap restore apply to the
-  // main buffer, then drop a newline so the shell prompt is on its own line.
-  output.write(`${RESET_SGR}${LEAVE_ALT_SCREEN}${ENABLE_WRAP}${SHOW_CURSOR}\r\n`);
+  output.write(
+    `${RESET_SGR}${LEAVE_ALT_SCREEN}${ENABLE_WRAP}${SHOW_CURSOR}${NORMAL_CURSOR_KEYS}${DISABLE_MOUSE}\r\n`,
+  );
+}
+
+/** Put the tty back into cooked mode so the shell can read arrow keys again. */
+export function restoreCookedMode(stdin: NodeJS.ReadStream = process.stdin): void {
+  try {
+    if (stdin.isTTY && typeof stdin.setRawMode === "function") {
+      stdin.setRawMode(false);
+    }
+  } catch {
+    // Some test doubles and embedded PTYs reject raw-mode changes.
+  }
+  if (stdin.isTTY) {
+    spawnSync("stty", ["sane"], {
+      stdio: [stdin, "ignore", "ignore"],
+    });
+  }
+  try {
+    stdin.pause();
+  } catch {
+    // Ignore pause failures; the process is exiting.
+  }
 }

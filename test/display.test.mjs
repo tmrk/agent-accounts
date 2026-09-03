@@ -120,7 +120,7 @@ test("clips a live frame to the terminal height without using a full clear", () 
     help: "1 switch · r refresh · q quit",
   }, { columns: 40, rows: 8 }));
 
-  assert.equal(frame.length, 8);
+  assert.ok(frame.length <= 8);
   assert.ok(frame.every(line => line.length <= 40));
   assert.match(frame[0], /Agent accounts/);
   assert.match(frame.at(-1), /1 switch/);

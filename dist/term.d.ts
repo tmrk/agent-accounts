@@ -13,6 +13,8 @@ export declare const SYNC_START = "\u001B[?2026h";
 export declare const SYNC_END = "\u001B[?2026l";
 export declare const CURSOR_HOME = "\u001B[H";
 export declare const ERASE_DOWN = "\u001B[J";
+export declare const NORMAL_CURSOR_KEYS = "\u001B[?1l\u001B>";
+export declare const DISABLE_MOUSE = "\u001B[?1000l\u001B[?1002l\u001B[?1003l\u001B[?1006l";
 export interface ViewSize {
     columns: number;
     rows: number;
@@ -42,3 +44,5 @@ export declare function enterDashboardScreen(output?: {
 export declare function leaveDashboardScreen(output?: {
     write(chunk: string): unknown;
 }): void;
+/** Put the tty back into cooked mode so the shell can read arrow keys again. */
+export declare function restoreCookedMode(stdin?: NodeJS.ReadStream): void;

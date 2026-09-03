@@ -589,7 +589,6 @@ export function composeDashboardFrame(
   const bodyBudget = Math.max(0, rows - 2);
   const clipped = clipBody(body, bodyBudget, width);
   for (const line of clipped) frame.push(padVisible(line, width));
-  while (frame.length < rows - 1) frame.push("".padEnd(width));
   frame.push(padVisible(footer, width));
   return frame.slice(0, rows);
 }
