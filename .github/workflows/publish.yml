@@ -1,0 +1,58 @@
+name: Publish to npm
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      - name: Check whether this version is already published
+        id: package
+        shell: bash
+        run: |
+          package_name=$(node -p "require('./package.json').name")
+          package_version=$(node -p "require('./package.json').version")
+          if npm view "${package_name}@${package_version}" version >/dev/null 2>&1; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "${package_name}@${package_version} is already published."
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+            echo "Publishing ${package_name}@${package_version}."
+          fi
+
+      - name: Install dependencies
+        if: steps.package.outputs.publish == 'true'
+        run: npm ci
+
+      - name: Test and build
+        if: steps.package.outputs.publish == 'true'
+        run: npm test
+
+      - name: Verify generated files are committed
+        if: steps.package.outputs.publish == 'true'
+        run: git diff --exit-code
+
+      - name: Publish package
+        if: steps.package.outputs.publish == 'true'
+        run: npm publish
