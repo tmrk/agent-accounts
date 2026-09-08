@@ -111,6 +111,29 @@ test("keeps provider identity, quota, and zero-value billing details visible", (
   assert.match(output, /On-demand\s+\$0 \/ \$0/);
 });
 
+test("renders a full Grok quota bar when zero usage is omitted", () => {
+  const lines = visible(renderGrokProfiles([{
+    name: "personal",
+    isActive: true,
+    createdAt: "2026-01-01T00:00:00Z",
+    auth: { key: "account", auth_mode: "oidc", user_id: "u1" },
+    usage: {
+      config: {
+        currentPeriod: {
+          type: "USAGE_PERIOD_TYPE_WEEKLY",
+          start: "2026-09-08T13:43:15Z",
+          end: "2026-09-15T13:43:15Z",
+        },
+      },
+    },
+  }], { width: 60 }));
+
+  const output = lines.join("\n");
+  assert.match(output, /Weekly limit/);
+  assert.match(output, /100\.0% left/);
+  assert.match(output, /█/);
+});
+
 function barSpan(line) {
   const start = [...line].findIndex(ch => ch === "█" || ch === "░");
   if (start < 0) return null;

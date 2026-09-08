@@ -496,7 +496,11 @@ function grokUsedPercent(profile: GrokProfileInfo): number | null {
   if (typeof config.creditUsagePercent === "number") return config.creditUsagePercent;
   const limit = config.monthlyLimit?.val ?? 0;
   const used = config.used?.val ?? 0;
-  return limit > 0 ? (used / limit) * 100 : null;
+  if (limit > 0) return (used / limit) * 100;
+  // Grok's protobuf JSON response omits scalar fields at their default value.
+  // An active period without creditUsagePercent therefore means 0% used, not
+  // that the included-credit pool is unavailable.
+  return config.currentPeriod ? 0 : null;
 }
 
 function grokPeriodLabel(profile: GrokProfileInfo): string {
