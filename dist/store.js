@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, mkdirSync, readdirSync, unlinkSync, existsSync, renameSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, readdirSync, unlinkSync, existsSync, renameSync, copyFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { extractEmail } from "./jwt.js";
@@ -6,7 +6,46 @@ import { ensureStoreDir, STORE_DIR } from "./paths.js";
 const ACCOUNTS_DIR = join(STORE_DIR, "accounts");
 const ADMIN_KEYS_DIR = join(STORE_DIR, "admin-keys");
 const USAGE_CACHE_DIR = join(STORE_DIR, "usage-cache");
-const CODEX_AUTH_PATH = join(homedir(), ".codex", "auth.json");
+const FILE_CREDENTIAL_STORE_LINE = 'cli_auth_credentials_store = "file"';
+/** Codex home: `$CODEX_HOME` when set, otherwise `~/.codex`. */
+export function getCodexHome() {
+    const fromEnv = process.env.CODEX_HOME?.trim();
+    return fromEnv ? fromEnv : join(homedir(), ".codex");
+}
+export function getCodexAuthPath() {
+    return join(getCodexHome(), "auth.json");
+}
+export function getCodexConfigPath() {
+    return join(getCodexHome(), "config.toml");
+}
+/** Whether auth.json is Codex's configured credential source. The default is file. */
+export function usesCodexFileCredentialStore() {
+    let config;
+    try {
+        config = readFileSync(getCodexConfigPath(), "utf-8");
+    }
+    catch {
+        return true;
+    }
+    for (const line of config.split("\n")) {
+        if (/^\s*\[/.test(line))
+            break;
+        const match = /^\s*cli_auth_credentials_store\s*=\s*["']?([a-z]+)["']?(?:\s*#.*)?\s*$/.exec(line);
+        if (match)
+            return match[1] === "file";
+    }
+    return true;
+}
+function emailFromAuth(auth) {
+    if (!auth?.tokens?.id_token)
+        return undefined;
+    try {
+        return extractEmail(auth.tokens.id_token);
+    }
+    catch {
+        return undefined;
+    }
+}
 function ensureDirs() {
     ensureStoreDir();
     mkdirSync(ACCOUNTS_DIR, { recursive: true });
@@ -36,32 +75,99 @@ export function readAuthFromHome(codexHome) {
         return null;
     }
 }
-/** Read the current active auth from ~/.codex/auth.json */
+/** Read the current active auth from `$CODEX_HOME/auth.json`. */
 export function readActiveAuth() {
-    return readAuthFromHome(join(homedir(), ".codex"));
+    return readAuthFromHome(getCodexHome());
 }
-/** Write auth to ~/.codex/auth.json (with backup) */
+function atomicWrite(path, contents, mode = 0o600) {
+    const tmpPath = `${path}.tmp`;
+    writeFileSync(tmpPath, contents, { mode });
+    renameSync(tmpPath, path);
+}
+/**
+ * Pin Codex to file-backed credentials so account switches via auth.json take
+ * effect. `auto`/`keyring` keep the OS keyring as source of truth, which makes
+ * the dashboard look switched while `codex` still uses the previous login.
+ *
+ * Only rewrites the top-level `cli_auth_credentials_store` key; profile tables
+ * are left alone. Returns true when config.toml was created or changed.
+ */
+export function applyFileCredentialStore(configToml) {
+    const lines = configToml.split("\n").map(line => line.replace(/\r$/, ""));
+    let inTable = false;
+    let foundTopLevel = false;
+    let changed = false;
+    const out = [];
+    for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith("[") && /^\[+[^#\]]/.test(trimmed)) {
+            inTable = true;
+        }
+        if (!inTable) {
+            const indent = line.match(/^(\s*)cli_auth_credentials_store\s*=/)?.[1];
+            if (indent !== undefined) {
+                foundTopLevel = true;
+                const alreadyFile = /^\s*cli_auth_credentials_store\s*=\s*["']?file["']?\s*(?:#.*)?$/.test(line);
+                if (alreadyFile) {
+                    out.push(line);
+                }
+                else {
+                    out.push(`${indent}${FILE_CREDENTIAL_STORE_LINE}`);
+                    changed = true;
+                }
+                continue;
+            }
+        }
+        out.push(line);
+    }
+    if (!foundTopLevel) {
+        const body = out.join("\n").replace(/^\n+/, "");
+        const text = body.trim() === "" ? `${FILE_CREDENTIAL_STORE_LINE}\n` : `${FILE_CREDENTIAL_STORE_LINE}\n\n${body}`;
+        return { text, changed: true };
+    }
+    return { text: out.join("\n"), changed };
+}
+export function ensureCodexFileCredentialStore() {
+    const home = getCodexHome();
+    mkdirSync(home, { recursive: true, mode: 0o700 });
+    const path = getCodexConfigPath();
+    let current = "";
+    try {
+        current = readFileSync(path, "utf-8");
+    }
+    catch {
+        current = "";
+    }
+    const { text, changed } = applyFileCredentialStore(current);
+    if (!changed)
+        return false;
+    atomicWrite(path, text.endsWith("\n") ? text : `${text}\n`);
+    return true;
+}
+/** Write auth to `$CODEX_HOME/auth.json` (with backup). */
 export function writeActiveAuth(auth) {
-    // Backup existing
-    if (existsSync(CODEX_AUTH_PATH)) {
-        const backupPath = CODEX_AUTH_PATH + ".bak";
+    const home = getCodexHome();
+    mkdirSync(home, { recursive: true, mode: 0o700 });
+    const authPath = getCodexAuthPath();
+    const payload = auth.auth_mode === "apikey"
+        ? { auth_mode: "apikey", OPENAI_API_KEY: auth.OPENAI_API_KEY ?? "" }
+        : auth;
+    const tmpPath = `${authPath}.tmp`;
+    writeFileSync(tmpPath, JSON.stringify(payload, null, 2), { mode: 0o600 });
+    if (existsSync(authPath)) {
         try {
-            renameSync(CODEX_AUTH_PATH, backupPath);
+            copyFileSync(authPath, `${authPath}.bak`);
         }
         catch {
             // Ignore backup failures
         }
     }
-    // Codex 0.125+ rejects auth.json when tokens.id_token is an empty string.
-    // For API key mode, strip the tokens block entirely and emit only the
-    // fields codex itself writes via `codex login --with-api-key`.
-    const payload = auth.auth_mode === "apikey"
-        ? { auth_mode: "apikey", OPENAI_API_KEY: auth.OPENAI_API_KEY ?? "" }
-        : auth;
-    // Atomic write via temp file
-    const tmpPath = CODEX_AUTH_PATH + ".tmp";
-    writeFileSync(tmpPath, JSON.stringify(payload, null, 2), { mode: 0o600 });
-    renameSync(tmpPath, CODEX_AUTH_PATH);
+    renameSync(tmpPath, authPath);
+}
+/** Pin the file credential store and write the auth Codex will load on the next process. */
+export function activateAuthOnSystem(auth) {
+    ensureCodexFileCredentialStore();
+    writeActiveAuth(auth);
 }
 /** Save an account to the store */
 export function saveAccount(account) {
@@ -112,16 +218,14 @@ export function removeAccount(email) {
 }
 /** Detect which stored account is currently active */
 export function detectActiveAccount() {
+    if (!usesCodexFileCredentialStore())
+        return null;
     const active = readActiveAuth();
     if (!active)
         return null;
-    // OAuth account: match by email from id_token
-    if (active.tokens?.id_token) {
-        const email = extractEmail(active.tokens.id_token);
-        if (email && findAccount(email))
-            return email;
-    }
-    // API key account: match by key prefix
+    const email = emailFromAuth(active);
+    if (email && findAccount(email))
+        return email;
     if (active.OPENAI_API_KEY) {
         const accounts = listAccounts();
         const match = accounts.find(a => a.auth.OPENAI_API_KEY === active.OPENAI_API_KEY);
@@ -220,18 +324,53 @@ export function writeUsageCache(snapshot) {
 }
 /** Save-back the current active auth to the stored account (preserves token rotations) */
 export function syncActiveToStore() {
+    if (!usesCodexFileCredentialStore())
+        return;
     const active = readActiveAuth();
     if (!active)
         return;
-    if (active.tokens?.id_token) {
-        const email = extractEmail(active.tokens.id_token);
-        if (!email)
-            return;
+    const email = emailFromAuth(active);
+    if (email) {
         const existing = findAccount(email);
         if (existing) {
             existing.auth = active;
             saveAccount(existing);
         }
+        return;
     }
+    if (active.OPENAI_API_KEY) {
+        const match = listAccounts().find(a => a.auth.OPENAI_API_KEY === active.OPENAI_API_KEY);
+        if (match) {
+            match.auth = active;
+            saveAccount(match);
+        }
+    }
+}
+/**
+ * Persist rotated tokens to the stored account, and to `$CODEX_HOME/auth.json`
+ * when that account is the one Codex currently has loaded.
+ */
+export function persistAccountAuth(auth) {
+    const email = emailFromAuth(auth);
+    if (email) {
+        const existing = findAccount(email);
+        if (existing) {
+            existing.auth = auth;
+            saveAccount(existing);
+        }
+        if (usesCodexFileCredentialStore() && emailFromAuth(readActiveAuth()) === email)
+            writeActiveAuth(auth);
+        return auth;
+    }
+    if (auth.OPENAI_API_KEY) {
+        const match = listAccounts().find(a => a.auth.OPENAI_API_KEY === auth.OPENAI_API_KEY);
+        if (match) {
+            match.auth = auth;
+            saveAccount(match);
+        }
+        if (usesCodexFileCredentialStore() && readActiveAuth()?.OPENAI_API_KEY === auth.OPENAI_API_KEY)
+            writeActiveAuth(auth);
+    }
+    return auth;
 }
 //# sourceMappingURL=store.js.map

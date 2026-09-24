@@ -1,7 +1,6 @@
 import type { AdditionalRateLimit, CodexAuthFile, UsageResponse, AccountUsage } from "./types.js";
-import { extractEmail } from "./jwt.js";
 import { refreshIfExpired, refreshTokens } from "./token-refresh.js";
-import { saveAccount, findAccount } from "./store.js";
+import { persistAccountAuth } from "./store.js";
 
 const USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
 
@@ -24,24 +23,10 @@ function resetAfterSeconds(window: { reset_after_seconds?: number; reset_at?: nu
   return Math.max(0, window.reset_at - Math.floor(Date.now() / 1000));
 }
 
-function persistAuth(auth: CodexAuthFile): CodexAuthFile {
-  if (auth.tokens) {
-    const email = extractEmail(auth.tokens.id_token);
-    if (email) {
-      const stored = findAccount(email);
-      if (stored) {
-        stored.auth = auth;
-        saveAccount(stored);
-      }
-    }
-  }
-  return auth;
-}
-
 /** Refresh auth and persist if needed, returns fresh auth */
 export async function ensureFreshAuth(auth: CodexAuthFile): Promise<CodexAuthFile> {
   const { auth: freshAuth, refreshed } = await refreshIfExpired(auth);
-  return refreshed ? persistAuth(freshAuth) : freshAuth;
+  return refreshed ? persistAccountAuth(freshAuth) : freshAuth;
 }
 
 export function isInvalidatedAuthMessage(message: string): boolean {
@@ -89,7 +74,7 @@ export async function fetchUsageWithRetry(auth: CodexAuthFile): Promise<UsageRes
     return await fetchUsage(current);
   } catch (err) {
     if (!isUnauthorizedError(err) || !current.tokens) throw err;
-    current = persistAuth(await refreshTokens(current));
+    current = persistAccountAuth(await refreshTokens(current));
     return fetchUsage(current);
   }
 }

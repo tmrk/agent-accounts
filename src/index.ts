@@ -2,10 +2,10 @@
 
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
-import { mkdirSync, openSync, appendFileSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, openSync, appendFileSync, mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readActiveAuth, writeActiveAuth, readAuthFromHome, listAccounts, saveAccount, findAccount, removeAccount, detectActiveAccount, syncActiveToStore, listAdminKeys, findAdminKey, saveAdminKey, removeAdminKey, pickAdminKeyFor, readUsageCache, readUsageCacheStale, writeUsageCache } from "./store.js";
+import { readActiveAuth, writeActiveAuth, readAuthFromHome, listAccounts, saveAccount, findAccount, removeAccount, detectActiveAccount, syncActiveToStore, activateAuthOnSystem, ensureCodexFileCredentialStore, usesCodexFileCredentialStore, getCodexAuthPath, listAdminKeys, findAdminKey, saveAdminKey, removeAdminKey, pickAdminKeyFor, readUsageCache, readUsageCacheStale, writeUsageCache } from "./store.js";
 import { extractEmail } from "./jwt.js";
 import { refreshIfExpired } from "./token-refresh.js";
 import { loadAccountUsage } from "./usage.js";
@@ -41,6 +41,7 @@ Usage:
   aacc --interval 10           Live dashboard, refresh every 10s
   aacc --live                  Same dashboard (explicit)
   aacc status --live --interval 10
+  aacc version                 Show agent-accounts version (--version, -V)
   aacc codex [command]         Manage Codex accounts
   aacc claude [command]        Manage Claude Code accounts
   aacc grok [command]          Manage Grok Build accounts
@@ -105,7 +106,7 @@ async function cmdAdd(options: AddOptions = { deviceAuth: false }): Promise<void
       console.log(`\nAdded account: ${email}`);
     }
 
-    writeActiveAuth(auth);
+    activateAuthOnSystem(auth);
   } finally {
     rmSync(loginHome, { recursive: true, force: true });
   }
@@ -500,7 +501,7 @@ function apiKeyUsageFromCache(account: StoredAccount, isActive: boolean, admins:
 async function cmdImport(): Promise<void> {
   const auth = readActiveAuth();
   if (!auth?.tokens?.id_token) {
-    console.error("No active Codex auth found in ~/.codex/auth.json.");
+    console.error(`No active Codex auth found in ${getCodexAuthPath()}.`);
     console.error("Run 'agent-accounts add' to log in first.");
     process.exit(1);
   }
@@ -525,12 +526,14 @@ async function cmdImport(): Promise<void> {
     saveAccount(account);
     console.log(`Imported account: ${email}`);
   }
+  ensureCodexFileCredentialStore();
 }
 
 /** Auto-import current auth if no accounts stored yet */
 function autoImportIfEmpty(): void {
   const accounts = listAccounts();
   if (accounts.length > 0) return;
+  if (!usesCodexFileCredentialStore()) return;
 
   const auth = readActiveAuth();
   if (!auth?.tokens?.id_token) return;
@@ -618,22 +621,30 @@ export async function activateCodexAccount(
 ): Promise<SwitchOutcome> {
   const account = resolveCodexAccount(email);
   const label = formatCodexLabel(account.email);
-  if (detectActiveAccount() === account.email) {
+  const wasUsingFileStore = usesCodexFileCredentialStore();
+  // Pin file-backed credentials before the already-active check. Otherwise a
+  // previous write to auth.json can look switched in this app while Codex is
+  // still reading the OS keyring.
+  const pinnedFileStore = ensureCodexFileCredentialStore();
+  if (detectActiveAccount() === account.email && !pinnedFileStore) {
     return alreadyActiveOutcome(label);
   }
 
-  syncActiveToStore();
+  if (detectActiveAccount() !== account.email || !wasUsingFileStore) {
+    if (wasUsingFileStore) syncActiveToStore();
 
-  try {
     const { auth, refreshed } = await refreshIfExpired(account.auth);
     if (refreshed) {
       account.auth = auth;
       saveAccount(account);
     }
     writeActiveAuth(auth);
-  } catch (err) {
-    writeActiveAuth(account.auth);
-    console.warn(`Warning: token refresh failed, using cached tokens: ${(err as Error).message}`);
+  }
+
+  if (detectActiveAccount() !== account.email) {
+    throw new Error(
+      `Failed to activate ${label} for Codex. Wrote auth.json but the live login is still ${detectActiveAccount() ?? "unset"}.`,
+    );
   }
 
   if (options.restartCodexGui) {
@@ -714,6 +725,9 @@ async function cmdRemove(email: string): Promise<void> {
 
 export async function loadCodexUsages(): Promise<AccountUsage[]> {
   autoImportIfEmpty();
+  // Codex may have rotated the active refresh token since the last dashboard
+  // load. Read its live credential only when Codex actually uses auth.json.
+  if (usesCodexFileCredentialStore()) syncActiveToStore();
   const accounts = listAccounts();
   if (accounts.length === 0) return [];
 
@@ -1025,6 +1039,11 @@ async function cmdLiveStatus(args: string[], intervalSeconds: number): Promise<v
 }
 
 async function main(): Promise<void> {
+  if (process.argv.length === 3 && ["version", "--version", "-V"].includes(process.argv[2]!)) {
+    const { version } = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf-8")) as { version: string };
+    console.log(`agent-accounts ${version}`);
+    return;
+  }
   const parsed = parseLiveArgs(process.argv.slice(2));
   const args = parsed.args;
   if (shouldRunLiveDashboard(args, parsed.options)) {

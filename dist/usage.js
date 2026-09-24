@@ -1,6 +1,5 @@
-import { extractEmail } from "./jwt.js";
 import { refreshIfExpired, refreshTokens } from "./token-refresh.js";
-import { saveAccount, findAccount } from "./store.js";
+import { persistAccountAuth } from "./store.js";
 const USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
 /** Format seconds into human-readable duration */
 function formatDuration(seconds) {
@@ -25,23 +24,10 @@ function resetAfterSeconds(window) {
         return undefined;
     return Math.max(0, window.reset_at - Math.floor(Date.now() / 1000));
 }
-function persistAuth(auth) {
-    if (auth.tokens) {
-        const email = extractEmail(auth.tokens.id_token);
-        if (email) {
-            const stored = findAccount(email);
-            if (stored) {
-                stored.auth = auth;
-                saveAccount(stored);
-            }
-        }
-    }
-    return auth;
-}
 /** Refresh auth and persist if needed, returns fresh auth */
 export async function ensureFreshAuth(auth) {
     const { auth: freshAuth, refreshed } = await refreshIfExpired(auth);
-    return refreshed ? persistAuth(freshAuth) : freshAuth;
+    return refreshed ? persistAccountAuth(freshAuth) : freshAuth;
 }
 export function isInvalidatedAuthMessage(message) {
     return /token_invalidated|token_revoked|refresh_token_invalidated|session has ended|invalidated oauth token/i.test(message);
@@ -84,7 +70,7 @@ export async function fetchUsageWithRetry(auth) {
     catch (err) {
         if (!isUnauthorizedError(err) || !current.tokens)
             throw err;
-        current = persistAuth(await refreshTokens(current));
+        current = persistAccountAuth(await refreshTokens(current));
         return fetchUsage(current);
     }
 }

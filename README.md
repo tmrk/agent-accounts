@@ -38,6 +38,7 @@ npm install -g github:tmrk/agent-accounts
 aacc                                # live dashboard in a TTY (snapshot if piped)
 aacc --once                         # one-shot snapshot even in a TTY
 aacc --interval 10                  # live dashboard, refresh every 10s
+aacc --version                      # show installed version
 aacc status --live                  # same dashboard (explicit --live)
 
 aacc codex add --device-auth        # add a Codex account
@@ -128,7 +129,9 @@ Grok Build officially supports `GROK_HOME`, browser OAuth, and `grok login --dev
 
 ## Storage and migration
 
-agent-accounts stores profile metadata and isolated provider homes under `~/.agent-accounts/`, with credential files written owner-only by this app or the provider CLI. Codex still activates an account through its standard `~/.codex/auth.json` file.
+agent-accounts stores profile metadata and isolated provider homes under `~/.agent-accounts/`, with credential files written owner-only by this app or the provider CLI. Codex is activated by writing `$CODEX_HOME/auth.json` (default `~/.codex/auth.json`). On add, import, and switch, this app also sets `cli_auth_credentials_store = "file"` in Codex's `config.toml` so the CLI, IDE extension, and Codex.app read that file instead of a stale OS keyring login. Running Codex sessions keep the previous account in memory until they restart (`aacc codex gui-switch` on macOS).
+
+If Codex reports `account/read failed` with `workspace routing discovery unauthorized (401)` after a switch, run `aacc codex status` to check the selected account, then `aacc codex switch <email>` and restart Codex. On macOS, `aacc codex gui-switch <email>` also restarts a running Codex.app. If the account shows an expired or invalidated session, use `aacc codex add` to sign in again. Keep `auth.json` private; it contains live credentials.
 
 On first run, if `~/.agent-accounts/` does not exist but `~/.codex-accounts/` does, the old store is copied to the new location. The old directory is left intact, so the existing `codex-accounts` installation and its PR workflow are unaffected.
 
