@@ -13,6 +13,7 @@ import { activateClaudeProfile, claudeMain, loadClaudeProfiles } from "./claude.
 import { activateGrokProfile, grokMain, loadGrokProfiles } from "./grok.js";
 import { validateAdminKey, listProjects, fetchUsageRollup } from "./openai-admin.js";
 import { rankUsagesForGto } from "./gto.js";
+import { syncCodexAppServerDaemon } from "./codex-daemon.js";
 import { restartCodexGui } from "./codex-gui.js";
 import { parseSwitchArgs } from "./switch-options.js";
 import { parseAddArgs } from "./add-options.js";
@@ -570,14 +571,13 @@ export async function activateCodexAccount(email, options = { restartCodexGui: f
     const account = resolveCodexAccount(email);
     const label = formatCodexLabel(account.email);
     const wasUsingFileStore = usesCodexFileCredentialStore();
-    // Pin file-backed credentials before the already-active check. Otherwise a
-    // previous write to auth.json can look switched in this app while Codex is
-    // still reading the OS keyring.
-    const pinnedFileStore = ensureCodexFileCredentialStore();
-    if (detectActiveAccount() === account.email && !pinnedFileStore) {
-        return alreadyActiveOutcome(label);
-    }
-    if (detectActiveAccount() !== account.email || !wasUsingFileStore) {
+    // Pin file-backed credentials before comparing accounts. Otherwise a previous
+    // write to auth.json can look switched in this app while Codex is still
+    // reading the OS keyring.
+    ensureCodexFileCredentialStore();
+    const sameFileAccount = detectActiveAccount() === account.email;
+    let wroteAuth = false;
+    if (!sameFileAccount || !wasUsingFileStore) {
         if (wasUsingFileStore)
             syncActiveToStore();
         const { auth, refreshed } = await refreshIfExpired(account.auth);
@@ -586,19 +586,33 @@ export async function activateCodexAccount(email, options = { restartCodexGui: f
             saveAccount(account);
         }
         writeActiveAuth(auth);
+        wroteAuth = true;
     }
     if (detectActiveAccount() !== account.email) {
         throw new Error(`Failed to activate ${label} for Codex. Wrote auth.json but the live login is still ${detectActiveAccount() ?? "unset"}.`);
     }
+    // The app-server daemon keeps the previous login, and its five-hour limit,
+    // until it is restarted. force is set when auth.json just changed, including
+    // a same-email rewrite that moved Codex off the OS keyring.
+    const daemon = await syncCodexAppServerDaemon(account.email, { force: wroteAuth });
+    if (!wroteAuth && (daemon.status === "not-running" || daemon.status === "current")) {
+        return alreadyActiveOutcome(label);
+    }
     if (options.restartCodexGui) {
         await reportCodexGuiRestart();
-        return { status: "switched", label };
     }
-    return {
-        status: "switched",
-        label,
-        hint: "restart running Codex sessions",
-    };
+    const hint = codexSwitchHint(daemon);
+    return hint ? { status: "switched", label, hint } : { status: "switched", label };
+}
+function codexSwitchHint(daemon) {
+    if (daemon.status === "restarted")
+        return "restarted the Codex app-server";
+    if (daemon.status === "failed") {
+        return `Codex app-server is still on the previous account (${daemon.message}). Run \`codex app-server daemon restart\``;
+    }
+    if (daemon.status === "not-running")
+        return "restart running Codex sessions";
+    return undefined;
 }
 async function cmdSwitch(email, options = { restartCodexGui: false }) {
     let result;
@@ -617,8 +631,16 @@ async function cmdSwitch(email, options = { restartCodexGui: false }) {
         return;
     }
     console.log(`Switched to ${result.label}`);
-    if (result.hint)
+    if (result.hint === "restarted the Codex app-server") {
+        console.log("Restarted the Codex app-server so new sessions use this account.");
+        return;
+    }
+    if (result.hint === "restart running Codex sessions") {
         console.log("Restart any running Codex sessions to use the new account.");
+        return;
+    }
+    if (result.hint)
+        console.warn(`Warning: ${result.hint}`);
 }
 async function reportCodexGuiRestart() {
     try {

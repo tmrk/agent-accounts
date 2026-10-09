@@ -63,8 +63,9 @@ place, and reflows immediately when the terminal is resized. Use `aacc --once` (
 output) for a one-shot snapshot. `--live` on a single provider still works, for example
 `aacc codex --live`. Number keys select an account (type `12` then Enter if there are more than
 nine). Selecting the account that is already active — including the only account on a
-provider — is a no-op. Press `r` to refresh now, or `q` / Esc / Ctrl-C to quit. API-key spend
-remains backed by its slower billing cache.
+provider — is a no-op, unless Codex's background app-server is still signed in
+as a different account. In that case the switch restarts the app-server. Press `r` to refresh
+now, or `q` / Esc / Ctrl-C to quit. API-key spend remains backed by its slower billing cache.
 
 A narrower terminal reflows the same data:
 
@@ -129,7 +130,7 @@ Grok Build officially supports `GROK_HOME`, browser OAuth, and `grok login --dev
 
 ## Storage and migration
 
-agent-accounts stores profile metadata and isolated provider homes under `~/.agent-accounts/`, with credential files written owner-only by this app or the provider CLI. Codex is activated by writing `$CODEX_HOME/auth.json` (default `~/.codex/auth.json`). On add, import, and switch, this app also sets `cli_auth_credentials_store = "file"` in Codex's `config.toml` so the CLI, IDE extension, and Codex.app read that file instead of a stale OS keyring login. Running Codex sessions keep the previous account in memory until they restart (`aacc codex gui-switch` on macOS).
+agent-accounts stores profile metadata and isolated provider homes under `~/.agent-accounts/`, with credential files written owner-only by this app or the provider CLI. Codex is activated by writing `$CODEX_HOME/auth.json` (default `~/.codex/auth.json`). On add, import, and switch, this app also sets `cli_auth_credentials_store = "file"` in Codex's `config.toml` so the CLI, IDE extension, and Codex.app read that file instead of a stale OS keyring login. Codex 0.157 and newer also keeps the login in a background app-server (`codex app-server daemon`) that reads `auth.json` once, so a replaced file alone leaves the old account — and its five-hour limit — in place. Switching restarts that daemon when it is running. A Codex session that is already open still has to be started again (`aacc codex gui-switch` on macOS also restarts Codex.app).
 
 If Codex reports `account/read failed` with `workspace routing discovery unauthorized (401)` after a switch, run `aacc codex status` to check the selected account, then `aacc codex switch <email>` and restart Codex. On macOS, `aacc codex gui-switch <email>` also restarts a running Codex.app. If the account shows an expired or invalidated session, use `aacc codex add` to sign in again. Keep `auth.json` private; it contains live credentials.
 
