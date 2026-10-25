@@ -28,6 +28,14 @@ export type CommandRunner = (command: string, args: string[], options?: {
 }) => Promise<CommandResult>;
 export declare function codexAppServerControlSocket(codexHome?: string): string;
 export declare function codexDaemonPidPath(codexHome?: string): string;
+export declare function codexDaemonSettingsPath(codexHome?: string): string;
+/**
+ * How long to wait for `codex app-server daemon restart`.
+ * Codex drains active sessions for `shutdownGraceSeconds` before the new
+ * process reads auth.json. A shorter wait kills that restart and leaves the
+ * previous login in place.
+ */
+export declare function codexDaemonRestartTimeoutMs(codexHome?: string): number;
 export declare function codexDaemonStampPath(): string;
 /** True when the control socket resolves to a live socket, including via a symlink. */
 export declare function isCodexAppServerDaemonRunning(codexHome?: string): boolean;

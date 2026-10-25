@@ -29,6 +29,20 @@ function listen(path) {
   });
 }
 
+/** macOS rejects Unix sockets once the path exceeds 104 bytes. */
+function listenLinked(linkPath) {
+  const short = join("/tmp", `aacc-${process.pid}-${Math.random().toString(16).slice(2)}.sock`);
+  return listen(short).then(server => {
+    symlinkSync(short, linkPath);
+    const close = server.close.bind(server);
+    server.close = callback => {
+      rmSync(short, { force: true });
+      return close(callback);
+    };
+    return server;
+  });
+}
+
 function writePid(codexHome, identity) {
   const dir = join(codexHome, "app-server-daemon");
   mkdirSync(dir, { recursive: true });
@@ -88,13 +102,13 @@ test("sync restarts a running daemon and remembers that process", async () => {
       stampPath,
       isRunning: () => true,
       runner: async (command, args, options) => {
-        calls.push([command, args, options.env.CODEX_HOME]);
+        calls.push([command, args, options.env.CODEX_HOME, options.timeoutMs]);
         writePid(codexHome, { pid: 2, processStartTime: "new" });
         return { code: 0, stdout: "", stderr: "" };
       },
     });
     assert.deepEqual(restarted, { status: "restarted" });
-    assert.deepEqual(calls, [["codex", ["app-server", "daemon", "restart"], codexHome]]);
+    assert.deepEqual(calls, [["codex", ["app-server", "daemon", "restart"], codexHome, 150_000]]);
     assert.equal(JSON.parse(readFileSync(stampPath, "utf-8")).accountKey, "one@example.com");
 
     const again = await syncCodexAppServerDaemon("one@example.com", {
@@ -106,6 +120,33 @@ test("sync restarts a running daemon and remembers that process", async () => {
       },
     });
     assert.deepEqual(again, { status: "current" });
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("sync waits out a configured daemon shutdown grace", async () => {
+  const home = mkdtempSync(join(tmpdir(), "aacc-daemon-grace-"));
+  const codexHome = join(home, "codex");
+  const stampPath = join(home, "stamp.json");
+  writePid(codexHome, { pid: 1, processStartTime: "old" });
+  writeFileSync(join(codexHome, "app-server-daemon", "settings.json"), JSON.stringify({
+    shutdownGraceSeconds: 120,
+  }));
+  let timeoutMs;
+  try {
+    const result = await syncCodexAppServerDaemon("one@example.com", {
+      codexHome,
+      stampPath,
+      isRunning: () => true,
+      runner: async (_command, _args, options) => {
+        timeoutMs = options.timeoutMs;
+        writePid(codexHome, { pid: 2, processStartTime: "new" });
+        return { code: 0, stdout: "", stderr: "" };
+      },
+    });
+    assert.equal(result.status, "restarted");
+    assert.equal(timeoutMs, 210_000);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
@@ -161,7 +202,7 @@ printf '%s\\n' "$*" >> ${JSON.stringify(log)}
 printf '%s\\n' '{"pid":43,"processStartTime":"reloaded"}' > "$CODEX_HOME/app-server-daemon/daemon.pid"
 exit 0
 `, { mode: 0o755 });
-  const server = await listen(join(codexHome, "app-server-control", "app-server-control.sock"));
+  const server = await listenLinked(join(codexHome, "app-server-control", "app-server-control.sock"));
   try {
     const result = spawnSync(process.execPath, [CLI, "codex", "switch", email], {
       env: { ...process.env, HOME: home, CODEX_HOME: codexHome, PATH: `${bin}:${process.env.PATH}` },
@@ -215,7 +256,7 @@ printf '%s\\n' '{"pid":42,"processStartTime":"after-switch"}' > "$CODEX_HOME/app
 exit 0
 `, { mode: 0o755 });
   const sock = join(codexHome, "app-server-control", "app-server-control.sock");
-  const server = await listen(sock);
+  const server = await listenLinked(sock);
   const env = {
     ...process.env,
     HOME: home,
@@ -235,6 +276,52 @@ exit 0
     assert.equal(second.status, 0, second.stderr);
     assert.match(second.stdout, /Already using fresh@example.com/);
     assert.equal(readFileSync(log, "utf-8").trim().split("\n").length, 1);
+  } finally {
+    server.close();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("codex add restarts a live app-server onto the new account", async () => {
+  const home = mkdtempSync(join(tmpdir(), "aacc-daemon-add-"));
+  const codexHome = join(home, ".codex");
+  const bin = join(home, "bin");
+  const log = join(home, "codex.log");
+  const email = "added@example.com";
+  const token = jwtWithEmail(email);
+  mkdirSync(join(codexHome, "app-server-control"), { recursive: true });
+  mkdirSync(bin, { recursive: true });
+  writePid(codexHome, { pid: 9, processStartTime: "loaded-old-login" });
+  writeFileSync(join(bin, "codex"), `#!/bin/sh
+printf '%s\\n' "$*" >> ${JSON.stringify(log)}
+if [ "$1" = "login" ]; then
+  mkdir -p "$CODEX_HOME"
+  cat > "$CODEX_HOME/auth.json" << EOF
+{"auth_mode":"chatgpt","tokens":{"id_token":${JSON.stringify(token)},"access_token":"added-access","refresh_token":"added-refresh"}}
+EOF
+  exit 0
+fi
+if [ "$1" = "app-server" ]; then
+  mkdir -p "$CODEX_HOME/app-server-daemon"
+  printf '%s\\n' '{"pid":44,"processStartTime":"reloaded-add"}' > "$CODEX_HOME/app-server-daemon/daemon.pid"
+  exit 0
+fi
+exit 1
+`, { mode: 0o755 });
+  const server = await listenLinked(join(codexHome, "app-server-control", "app-server-control.sock"));
+  try {
+    const result = spawnSync(process.execPath, [CLI, "codex", "add"], {
+      env: { ...process.env, HOME: home, CODEX_HOME: codexHome, PATH: `${bin}:${process.env.PATH}` },
+      encoding: "utf-8",
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /Added account: added@example.com/);
+    assert.match(result.stdout, /Restarted the Codex app-server so new sessions use this account/);
+    const lines = readFileSync(log, "utf-8").trim().split("\n");
+    assert.match(lines[0], /^login /);
+    assert.match(lines[1], /app-server daemon restart/);
+    const auth = JSON.parse(readFileSync(join(codexHome, "auth.json"), "utf-8"));
+    assert.equal(auth.tokens.access_token, "added-access");
   } finally {
     server.close();
     rmSync(home, { recursive: true, force: true });

@@ -5,7 +5,11 @@ import { STORE_DIR } from "./paths.js";
 import { getCodexHome } from "./store.js";
 
 const STAMP_NAME = "codex-daemon-account.json";
-const DEFAULT_RESTART_TIMEOUT_MS = 20_000;
+/** Codex's default and maximum `shutdownGraceSeconds`. */
+const DEFAULT_SHUTDOWN_GRACE_SECONDS = 60;
+const MAX_SHUTDOWN_GRACE_SECONDS = 300;
+/** Time after the grace period for the forced stop, replacement launch, and readiness. */
+const RESTART_SLACK_SECONDS = 90;
 
 /**
  * Codex 0.157+ attaches new CLI sessions to a shared app-server daemon that
@@ -45,6 +49,35 @@ export function codexAppServerControlSocket(codexHome = getCodexHome()): string 
 
 export function codexDaemonPidPath(codexHome = getCodexHome()): string {
   return join(codexHome, "app-server-daemon", "daemon.pid");
+}
+
+export function codexDaemonSettingsPath(codexHome = getCodexHome()): string {
+  return join(codexHome, "app-server-daemon", "settings.json");
+}
+
+/**
+ * How long to wait for `codex app-server daemon restart`.
+ * Codex drains active sessions for `shutdownGraceSeconds` before the new
+ * process reads auth.json. A shorter wait kills that restart and leaves the
+ * previous login in place.
+ */
+export function codexDaemonRestartTimeoutMs(codexHome = getCodexHome()): number {
+  return (readShutdownGraceSeconds(codexHome) + RESTART_SLACK_SECONDS) * 1000;
+}
+
+function readShutdownGraceSeconds(codexHome: string): number {
+  try {
+    const raw = JSON.parse(readFileSync(codexDaemonSettingsPath(codexHome), "utf-8")) as {
+      shutdownGraceSeconds?: unknown;
+    };
+    const grace = raw.shutdownGraceSeconds;
+    if (typeof grace !== "number" || !Number.isInteger(grace) || grace < 0 || grace > MAX_SHUTDOWN_GRACE_SECONDS) {
+      return DEFAULT_SHUTDOWN_GRACE_SECONDS;
+    }
+    return grace;
+  } catch {
+    return DEFAULT_SHUTDOWN_GRACE_SECONDS;
+  }
 }
 
 export function codexDaemonStampPath(): string {
@@ -180,7 +213,7 @@ export async function syncCodexAppServerDaemon(
   let result: CommandResult;
   try {
     result = await runner("codex", ["app-server", "daemon", "restart"], {
-      timeoutMs: options.timeoutMs ?? DEFAULT_RESTART_TIMEOUT_MS,
+      timeoutMs: options.timeoutMs ?? codexDaemonRestartTimeoutMs(codexHome),
       env: { ...process.env, CODEX_HOME: codexHome },
     });
   } catch (err) {

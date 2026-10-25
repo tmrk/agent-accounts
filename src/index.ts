@@ -108,6 +108,10 @@ async function cmdAdd(options: AddOptions = { deviceAuth: false }): Promise<void
     }
 
     activateAuthOnSystem(auth);
+    // Login writes auth.json in an isolated home. The running app-server still
+    // has the previous account until it starts again.
+    const daemon = await syncCodexAppServerDaemon(email, { force: true });
+    logCodexDaemonHint(codexSwitchHint(daemon));
   } finally {
     rmSync(loginHome, { recursive: true, force: true });
   }
@@ -688,15 +692,19 @@ async function cmdSwitch(email: string, options: SwitchOptions = { restartCodexG
     return;
   }
   console.log(`Switched to ${result.label}`);
-  if (result.hint === "restarted the Codex app-server") {
+  logCodexDaemonHint(result.hint);
+}
+
+function logCodexDaemonHint(hint: string | undefined): void {
+  if (hint === "restarted the Codex app-server") {
     console.log("Restarted the Codex app-server so new sessions use this account.");
     return;
   }
-  if (result.hint === "restart running Codex sessions") {
+  if (hint === "restart running Codex sessions") {
     console.log("Restart any running Codex sessions to use the new account.");
     return;
   }
-  if (result.hint) console.warn(`Warning: ${result.hint}`);
+  if (hint) console.warn(`Warning: ${hint}`);
 }
 
 async function reportCodexGuiRestart(): Promise<void> {
