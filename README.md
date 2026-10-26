@@ -42,7 +42,7 @@ aacc --version                      # show installed version
 aacc status --live                  # same dashboard (explicit --live)
 
 aacc codex add --device-auth        # add a Codex account
-aacc claude add                     # add a Claude Code account
+aacc add claude                     # add a Claude Code account and log claude in
 aacc grok add --device-auth         # add a Grok Build account
 
 aacc codex                          # usage + interactive Codex switcher
@@ -50,7 +50,7 @@ aacc claude                         # usage + interactive Claude switcher
 aacc grok                           # usage + interactive Grok switcher
 ```
 
-The original flat Codex commands remain aliases, so `aacc add`, `aacc switch`, and `aacc usage` work too.
+The original flat Codex commands remain aliases, so `aacc add`, `aacc switch`, and `aacc usage` manage Codex. `aacc add claude` and `aacc add grok` add those providers instead. `aacc add claude` also logs that account into Claude Code.
 
 The status view is a responsive terminal dashboard: each provider gets a compact section, account
 state and plan are grouped in the header, and quota bars represent the percentage remaining. The
@@ -89,6 +89,7 @@ Codex OAuth profiles show the rolling five-hour and weekly limits, extra applica
 ## Claude Code
 
 ```bash
+aacc add claude [name]              # same as aacc claude add
 aacc claude add [name]
 aacc claude list
 aacc claude switch [name]
@@ -97,15 +98,11 @@ aacc claude remove <name>
 aacc claude env
 ```
 
-Claude profiles use separate `CLAUDE_CONFIG_DIR` directories and show five-hour, weekly, model-specific, and extra-usage limits when available.
+Claude profiles keep separate config directories, so other stored accounts stay signed in. They show five-hour, weekly, model-specific, and extra-usage limits when available.
 
-To make the selected profile active for direct `claude` invocations:
+`aacc add claude` and `aacc claude switch` also write that login where Claude Code reads it when `CLAUDE_CONFIG_DIR` is unset: `~/.claude/.credentials.json`, and on macOS the Keychain item `Claude Code-credentials`. Restart Claude Code if it is already open. An existing session keeps the previous login until it starts again.
 
-```bash
-eval "$(aacc claude env)"
-```
-
-Add that line to `.zshrc` or `.bashrc` if you want `aacc claude switch` to control future shells automatically. `aacc claude run <name>` needs no shell integration.
+`aacc claude run <name>` launches Claude with that profile's own config directory. `eval "$(aacc claude env)"` does the same for later `claude` commands in the shell, including settings and session history, not just the login.
 
 ## Grok Build
 

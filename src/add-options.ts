@@ -2,6 +2,17 @@ export interface AddOptions {
   deviceAuth: boolean;
 }
 
+export type AccountProvider = "codex" | "claude" | "grok";
+
+/** `aacc add claude` / `aacc login grok` select a provider. Flat `aacc add` stays Codex. */
+export function parseProviderInvocation(args: string[]): { provider: AccountProvider; rest: string[] } | null {
+  const command = args[0];
+  if (command !== "add" && command !== "login") return null;
+  const provider = args[1];
+  if (provider !== "codex" && provider !== "claude" && provider !== "grok") return null;
+  return { provider, rest: [command, ...args.slice(2)] };
+}
+
 export function parseAddArgs(args: string[]): AddOptions {
   const options: AddOptions = { deviceAuth: false };
 

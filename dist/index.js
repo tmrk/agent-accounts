@@ -16,7 +16,7 @@ import { rankUsagesForGto } from "./gto.js";
 import { syncCodexAppServerDaemon } from "./codex-daemon.js";
 import { restartCodexGui } from "./codex-gui.js";
 import { parseSwitchArgs } from "./switch-options.js";
-import { parseAddArgs } from "./add-options.js";
+import { parseAddArgs, parseProviderInvocation } from "./add-options.js";
 import { runCodexLogin } from "./codex-login.js";
 import { questionOrEscape } from "./interactive.js";
 import { alreadyActiveOutcome, parseLiveArgs, runLive, shouldRunLiveDashboard } from "./live.js";
@@ -49,6 +49,12 @@ Codex commands:
 Provider help:
   aacc claude help
   aacc grok help
+
+Flat commands:
+  aacc add                         Add a Codex account
+  aacc add claude [name]           Add a Claude Code account and log claude in
+  aacc add grok [name]             Add a Grok Build account
+  aacc add codex [--device-auth]   Add a Codex account
 
 The original flat Codex commands (for example, \`aacc add\`) remain aliases.
 `;
@@ -993,8 +999,16 @@ async function main() {
         case "-h":
             console.log(HELP);
             return;
-        default:
+        default: {
+            const providerCommand = parseProviderInvocation(args);
+            if (providerCommand?.provider === "claude")
+                return claudeMain(providerCommand.rest);
+            if (providerCommand?.provider === "grok")
+                return grokMain(providerCommand.rest);
+            if (providerCommand?.provider === "codex")
+                return codexMain(providerCommand.rest);
             return codexMain(args);
+        }
     }
 }
 main().catch((err) => {

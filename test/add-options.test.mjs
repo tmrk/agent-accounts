@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { parseAddArgs, codexLoginArgs } from "../dist/add-options.js";
+import { parseAddArgs, parseProviderInvocation, codexLoginArgs } from "../dist/add-options.js";
 
 test("parses device-auth login flag", () => {
   const parsed = parseAddArgs(["--device-auth"]);
@@ -32,4 +32,25 @@ test("rejects extra positional arguments", () => {
     () => parseAddArgs(["alice@example.com"]),
     /Unexpected extra argument/,
   );
+});
+
+test("routes add and login to the named provider", () => {
+  assert.equal(parseProviderInvocation(["add"]), null);
+  assert.equal(parseProviderInvocation(["add", "--device-auth"]), null);
+  assert.deepEqual(parseProviderInvocation(["add", "claude"]), {
+    provider: "claude",
+    rest: ["add"],
+  });
+  assert.deepEqual(parseProviderInvocation(["add", "claude", "work"]), {
+    provider: "claude",
+    rest: ["add", "work"],
+  });
+  assert.deepEqual(parseProviderInvocation(["login", "grok", "--device-auth"]), {
+    provider: "grok",
+    rest: ["login", "--device-auth"],
+  });
+  assert.deepEqual(parseProviderInvocation(["add", "codex", "--device-auth"]), {
+    provider: "codex",
+    rest: ["add", "--device-auth"],
+  });
 });

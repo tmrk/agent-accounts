@@ -1,3 +1,13 @@
+/** `aacc add claude` / `aacc login grok` select a provider. Flat `aacc add` stays Codex. */
+export function parseProviderInvocation(args) {
+    const command = args[0];
+    if (command !== "add" && command !== "login")
+        return null;
+    const provider = args[1];
+    if (provider !== "codex" && provider !== "claude" && provider !== "grok")
+        return null;
+    return { provider, rest: [command, ...args.slice(2)] };
+}
 export function parseAddArgs(args) {
     const options = { deviceAuth: false };
     for (const arg of args) {

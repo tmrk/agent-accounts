@@ -1,6 +1,6 @@
-import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync, renameSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync, renameSync, statSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { homedir, userInfo } from "node:os";
 import { execFile, execSync } from "node:child_process";
 import { ensureStoreDir, STORE_DIR } from "./paths.js";
@@ -221,92 +221,180 @@ export function getAuthStatusAsync(name) {
 function keychainHash(instancePath) {
     return createHash("sha256").update(instancePath).digest("hex").slice(0, 8);
 }
-/** Read Claude credential from macOS Keychain or .credentials.json fallback */
-export function readCredential(instancePath) {
-    // Try .credentials.json first (Linux/Windows, or if it exists on macOS)
-    const credPath = join(instancePath, ".credentials.json");
-    if (existsSync(credPath)) {
-        try {
-            const raw = JSON.parse(readFileSync(credPath, "utf-8"));
-            const oauth = raw?.claudeAiOauth;
-            if (oauth) {
-                return Promise.resolve({
-                    accessToken: oauth.accessToken,
-                    refreshToken: oauth.refreshToken,
-                    subscriptionType: oauth.subscriptionType,
-                    rateLimitTier: oauth.rateLimitTier,
-                    expiresAt: oauth.expiresAt,
-                    refreshTokenExpiresAt: oauth.refreshTokenExpiresAt,
-                    scopes: Array.isArray(oauth.scopes) ? oauth.scopes : undefined,
-                    clientId: oauth.clientId,
-                });
-            }
-        }
-        catch { /* fall through */ }
+const KEYCHAIN_SERVICE_BASE = "Claude Code-credentials";
+/** Config directory Claude Code uses when CLAUDE_CONFIG_DIR is unset. */
+export function defaultClaudeConfigDir() {
+    return join(homedir(), ".claude");
+}
+/** Home-level account file Claude Code uses when CLAUDE_CONFIG_DIR is unset. */
+export function defaultClaudeAccountFile() {
+    return join(homedir(), ".claude.json");
+}
+/**
+ * macOS Keychain service for a Claude config directory.
+ * An unset CLAUDE_CONFIG_DIR uses the unhashed name. Setting the variable,
+ * even to the default path, selects the hashed name instead.
+ */
+export function claudeKeychainService(configDir, isolated) {
+    if (!isolated)
+        return KEYCHAIN_SERVICE_BASE;
+    return `${KEYCHAIN_SERVICE_BASE}-${keychainHash(configDir)}`;
+}
+function isDefaultClaudeConfig(configDir) {
+    return resolve(configDir) === resolve(defaultClaudeConfigDir());
+}
+/** Account name Claude Code uses for the default Keychain item. */
+function claudeKeychainAccount() {
+    let name = "claude-code-user";
+    try {
+        name = process.env.USER || userInfo().username;
     }
-    // macOS: read from Keychain
-    if (process.platform !== "darwin")
-        return Promise.resolve(null);
-    const hash = keychainHash(instancePath);
-    const service = `Claude Code-credentials-${hash}`;
-    const account = userInfo().username;
-    return new Promise((resolve) => {
-        execFile("security", ["find-generic-password", "-s", service, "-a", account, "-w"], {
-            encoding: "utf-8",
-            timeout: 5000,
-        }, (_error, stdout) => {
-            if (!stdout?.trim()) {
-                resolve(null);
-                return;
-            }
-            try {
-                const data = JSON.parse(stdout.trim());
-                const oauth = data?.claudeAiOauth;
-                if (oauth) {
-                    resolve({
-                        accessToken: oauth.accessToken,
-                        refreshToken: oauth.refreshToken,
-                        subscriptionType: oauth.subscriptionType,
-                        rateLimitTier: oauth.rateLimitTier,
-                        expiresAt: oauth.expiresAt,
-                        refreshTokenExpiresAt: oauth.refreshTokenExpiresAt,
-                        scopes: Array.isArray(oauth.scopes) ? oauth.scopes : undefined,
-                        clientId: oauth.clientId,
-                    });
-                    return;
-                }
-            }
-            catch { /* ignore */ }
-            resolve(null);
+    catch {
+        // Keep the fallback Claude uses when the user name cannot be read.
+    }
+    return /^[a-zA-Z0-9._-]+$/.test(name) ? name : "claude-code-user";
+}
+export function readOauthEmail(claudeJsonPath) {
+    try {
+        const data = JSON.parse(readFileSync(claudeJsonPath, "utf-8"));
+        const email = data.oauthAccount?.emailAddress;
+        return typeof email === "string" && email.includes("@") ? email : null;
+    }
+    catch {
+        return null;
+    }
+}
+/** Copy the profile's oauthAccount into Claude's home account file. Other keys are kept. */
+export function syncOauthAccount(instancePath, accountFile) {
+    let source;
+    try {
+        const parsed = JSON.parse(readFileSync(join(instancePath, ".claude.json"), "utf-8"));
+        if (!parsed.oauthAccount || typeof parsed.oauthAccount !== "object" || Array.isArray(parsed.oauthAccount)) {
+            return false;
+        }
+        source = parsed.oauthAccount;
+    }
+    catch {
+        return false;
+    }
+    let dest = {};
+    if (existsSync(accountFile)) {
+        try {
+            const parsed = JSON.parse(readFileSync(accountFile, "utf-8"));
+            if (parsed && typeof parsed === "object" && !Array.isArray(parsed))
+                dest = parsed;
+        }
+        catch {
+            dest = {};
+        }
+    }
+    const current = dest.oauthAccount && typeof dest.oauthAccount === "object" && !Array.isArray(dest.oauthAccount)
+        ? dest.oauthAccount
+        : undefined;
+    const sameAccount = !!current
+        && typeof current.emailAddress === "string"
+        && typeof source.emailAddress === "string"
+        && current.emailAddress.toLowerCase() === source.emailAddress.toLowerCase()
+        && (typeof current.accountUuid !== "string"
+            || typeof source.accountUuid !== "string"
+            || current.accountUuid === source.accountUuid);
+    if (sameAccount || JSON.stringify(dest.oauthAccount) === JSON.stringify(source))
+        return false;
+    dest.oauthAccount = source;
+    const mode = existsSync(accountFile) ? statSync(accountFile).mode & 0o777 : 0o600;
+    mkdirSync(dirname(accountFile), { recursive: true, mode: 0o700 });
+    const temp = `${accountFile}.tmp-${process.pid}`;
+    writeFileSync(temp, JSON.stringify(dest, null, 2), { mode });
+    renameSync(temp, accountFile);
+    return true;
+}
+function credentialFromPayload(payload) {
+    if (!payload || typeof payload !== "object" || Array.isArray(payload))
+        return null;
+    const oauth = payload.claudeAiOauth;
+    if (!oauth || typeof oauth !== "object" || Array.isArray(oauth))
+        return null;
+    const record = oauth;
+    return {
+        accessToken: typeof record.accessToken === "string" ? record.accessToken : undefined,
+        refreshToken: typeof record.refreshToken === "string" ? record.refreshToken : undefined,
+        subscriptionType: typeof record.subscriptionType === "string" ? record.subscriptionType : undefined,
+        rateLimitTier: typeof record.rateLimitTier === "string" ? record.rateLimitTier : undefined,
+        expiresAt: typeof record.expiresAt === "number" ? record.expiresAt : undefined,
+        refreshTokenExpiresAt: typeof record.refreshTokenExpiresAt === "number" ? record.refreshTokenExpiresAt : undefined,
+        scopes: Array.isArray(record.scopes) ? record.scopes.filter((scope) => typeof scope === "string") : undefined,
+        clientId: typeof record.clientId === "string" ? record.clientId : undefined,
+    };
+}
+function readCredentialFile(instancePath) {
+    const credPath = join(instancePath, ".credentials.json");
+    if (!existsSync(credPath))
+        return null;
+    try {
+        return credentialFromPayload(JSON.parse(readFileSync(credPath, "utf-8")));
+    }
+    catch {
+        return null;
+    }
+}
+function runSecurity(args) {
+    return new Promise((resolve, reject) => {
+        execFile("security", args, { encoding: "utf-8", timeout: 5000 }, (error, stdout) => {
+            if (error)
+                reject(error);
+            else
+                resolve({ stdout: stdout ?? "" });
         });
     });
 }
+async function readKeychainPayload(service, account, security = runSecurity) {
+    try {
+        const { stdout } = await security(["find-generic-password", "-s", service, "-a", account, "-w"]);
+        if (!stdout.trim())
+            return null;
+        const parsed = JSON.parse(stdout.trim());
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+            return null;
+        return parsed;
+    }
+    catch {
+        return null;
+    }
+}
+/** Read Claude credential from macOS Keychain or .credentials.json fallback */
+export async function readCredential(instancePath) {
+    // Claude prefers the unhashed Keychain item when CLAUDE_CONFIG_DIR is unset,
+    // and ignores a newer plaintext file sitting beside a stale item.
+    if (process.platform === "darwin" && isDefaultClaudeConfig(instancePath)) {
+        const keychain = await readKeychainPayload(claudeKeychainService(instancePath, false), claudeKeychainAccount());
+        const fromKeychain = credentialFromPayload(keychain);
+        if (fromKeychain)
+            return fromKeychain;
+    }
+    const fromFile = readCredentialFile(instancePath);
+    if (fromFile)
+        return fromFile;
+    if (process.platform !== "darwin" || isDefaultClaudeConfig(instancePath))
+        return null;
+    const keychain = await readKeychainPayload(claudeKeychainService(instancePath, true), userInfo().username);
+    return credentialFromPayload(keychain);
+}
 async function readCredentialPayload(instancePath) {
+    if (process.platform === "darwin" && isDefaultClaudeConfig(instancePath)) {
+        const keychain = await readKeychainPayload(claudeKeychainService(instancePath, false), claudeKeychainAccount());
+        if (keychain?.claudeAiOauth)
+            return keychain;
+    }
     const credPath = join(instancePath, ".credentials.json");
     if (existsSync(credPath)) {
         return JSON.parse(readFileSync(credPath, "utf-8"));
     }
-    if (process.platform !== "darwin")
+    if (process.platform !== "darwin" || isDefaultClaudeConfig(instancePath))
         return {};
-    const service = `Claude Code-credentials-${keychainHash(instancePath)}`;
-    const account = userInfo().username;
-    return new Promise((resolve, reject) => {
-        execFile("security", ["find-generic-password", "-s", service, "-a", account, "-w"], {
-            encoding: "utf-8",
-            timeout: 5000,
-        }, (error, stdout) => {
-            if (error || !stdout?.trim()) {
-                reject(error ?? new Error("Claude credential not found"));
-                return;
-            }
-            try {
-                resolve(JSON.parse(stdout.trim()));
-            }
-            catch (parseError) {
-                reject(parseError);
-            }
-        });
-    });
+    const keychain = await readKeychainPayload(claudeKeychainService(instancePath, true), userInfo().username);
+    if (!keychain)
+        throw new Error("Claude credential not found");
+    return keychain;
 }
 async function writeCredentialPayload(instancePath, payload) {
     const serialized = JSON.stringify(payload, null, 2);
@@ -317,19 +405,93 @@ async function writeCredentialPayload(instancePath, payload) {
         renameSync(temp, credPath);
         return;
     }
-    const service = `Claude Code-credentials-${keychainHash(instancePath)}`;
-    const account = userInfo().username;
-    await new Promise((resolve, reject) => {
-        execFile("security", ["add-generic-password", "-U", "-s", service, "-a", account, "-w", serialized], {
-            encoding: "utf-8",
-            timeout: 5000,
-        }, (error) => error ? reject(error) : resolve());
+    await writeKeychainLogin(instancePath, payload, { defaultLogin: false });
+}
+function writeCredentialFile(targetDir, payload) {
+    mkdirSync(targetDir, { recursive: true, mode: 0o700 });
+    const credPath = join(targetDir, ".credentials.json");
+    const temp = `${credPath}.tmp-${process.pid}`;
+    writeFileSync(temp, JSON.stringify(payload, null, 2), { mode: 0o600 });
+    renameSync(temp, credPath);
+}
+async function writeKeychainLogin(targetDir, payload, options) {
+    const security = options.security ?? runSecurity;
+    const isolated = options.defaultLogin === true ? false
+        : options.defaultLogin === false ? true
+            : !isDefaultClaudeConfig(targetDir);
+    const service = claudeKeychainService(targetDir, isolated);
+    const account = isolated ? userInfo().username : claudeKeychainAccount();
+    let merged = payload;
+    const existing = await readKeychainPayload(service, account, security);
+    if (existing)
+        merged = { ...existing, ...payload };
+    await security(["add-generic-password", "-U", "-s", service, "-a", account, "-w", JSON.stringify(merged)]);
+    return merged;
+}
+/** Write a Claude OAuth payload where Claude Code will read it for this config directory. */
+export async function writeClaudeLogin(targetDir, payload, options = {}) {
+    const platform = options.platform ?? process.platform;
+    let stored = payload;
+    if (platform === "darwin") {
+        stored = await writeKeychainLogin(targetDir, payload, options);
+    }
+    writeCredentialFile(targetDir, stored);
+}
+/** Make Claude Code's default login match a stored profile. */
+export async function installClaudeLogin(instancePath, targetDir = defaultClaudeConfigDir()) {
+    const payload = await readCredentialPayload(instancePath);
+    if (!credentialFromPayload(payload)?.accessToken) {
+        throw new Error("Claude profile has no OAuth login to activate");
+    }
+    const defaultLogin = isDefaultClaudeConfig(targetDir);
+    await writeClaudeLogin(targetDir, payload, { defaultLogin });
+    if (defaultLogin)
+        syncOauthAccount(instancePath, defaultClaudeAccountFile());
+}
+function systemLoginLocations(options) {
+    return {
+        configDir: options?.systemConfigDir ?? defaultClaudeConfigDir(),
+        accountFile: options?.systemAccountFile ?? defaultClaudeAccountFile(),
+    };
+}
+/**
+ * Keep the default Claude login and this profile on the same refresh token
+ * when they are the same account. Claude rotates the refresh token in
+ * ~/.claude when it refreshes; copying only one way would sign the other out.
+ * A different account on the default login is left alone.
+ */
+async function reconcileWithSystemLogin(instancePath, options) {
+    const profileEmail = readOauthEmail(join(instancePath, ".claude.json"));
+    if (!profileEmail)
+        return;
+    const { configDir, accountFile } = systemLoginLocations(options);
+    const systemEmail = readOauthEmail(accountFile);
+    if (!systemEmail || systemEmail.toLowerCase() !== profileEmail.toLowerCase())
+        return;
+    const profile = await readCredential(instancePath);
+    const system = await readCredential(configDir);
+    if (!profile?.refreshToken || !system?.refreshToken || profile.refreshToken === system.refreshToken)
+        return;
+    if ((system.expiresAt ?? 0) > (profile.expiresAt ?? 0)) {
+        await writeCredentialPayload(instancePath, await readCredentialPayload(configDir));
+        return;
+    }
+    await writeClaudeLogin(configDir, await readCredentialPayload(instancePath), {
+        defaultLogin: isDefaultClaudeConfig(configDir),
     });
 }
 /** Refresh an expiring Claude OAuth credential and persist any rotated tokens. */
-export async function ensureFreshClaudeCredential(instancePath, credential, fetchImpl = fetch) {
-    if (credential.expiresAt && credential.expiresAt > Date.now() + REFRESH_EARLY_MS)
-        return credential;
+export async function ensureFreshClaudeCredential(instancePath, credential, fetchImpl = fetch, options) {
+    try {
+        await reconcileWithSystemLogin(instancePath, options);
+    }
+    catch {
+        // A profile refresh should still succeed when the default login cannot be updated.
+    }
+    const adopted = await readCredential(instancePath);
+    const newest = (adopted?.expiresAt ?? 0) >= (credential.expiresAt ?? 0) ? (adopted ?? credential) : credential;
+    if (newest.expiresAt && newest.expiresAt > Date.now() + REFRESH_EARLY_MS)
+        return newest;
     // A concurrent Claude process may already have refreshed the file.
     const latest = await readCredential(instancePath);
     if (latest?.expiresAt && latest.expiresAt > Date.now() + REFRESH_EARLY_MS)
@@ -379,6 +541,12 @@ export async function ensureFreshClaudeCredential(instancePath, credential, fetc
         : {};
     payload.claudeAiOauth = { ...existingOauth, ...refreshed };
     await writeCredentialPayload(instancePath, payload);
+    try {
+        await reconcileWithSystemLogin(instancePath, options);
+    }
+    catch {
+        // The rotated profile token is saved. The default login is updated on the next switch.
+    }
     return refreshed;
 }
 export class ClaudeUsageError extends Error {

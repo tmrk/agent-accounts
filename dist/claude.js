@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { createProfile, listProfiles, findProfile, removeProfile, getActiveProfile, setActiveProfile, getInstancePath, detectClaudeCli, getAuthStatusAsync, getAuthStatusForPath, validateProfileName, createTempInstance, registerProfile, cleanupInstance, readCredential, fetchClaudeUsage, ensureFreshClaudeCredential, ClaudeUsageError, readClaudeUsageCache, writeClaudeUsageCache, } from "./claude-store.js";
+import { createProfile, listProfiles, findProfile, removeProfile, getActiveProfile, setActiveProfile, getInstancePath, detectClaudeCli, getAuthStatusAsync, getAuthStatusForPath, validateProfileName, createTempInstance, registerProfile, cleanupInstance, readCredential, fetchClaudeUsage, ensureFreshClaudeCredential, installClaudeLogin, ClaudeUsageError, readClaudeUsageCache, writeClaudeUsageCache, defaultClaudeConfigDir, } from "./claude-store.js";
 import { displayClaudeProfiles, displayClaudeProfilesNumbered } from "./display.js";
 import { questionOrEscape } from "./interactive.js";
 import { alreadyActiveOutcome } from "./live.js";
@@ -7,17 +7,19 @@ const HELP = `aacc claude - Manage multiple Claude Code profiles
 
 Usage:
   aacc claude                     Show profiles and switch interactively
-  aacc claude add [name]          Add account (opens OAuth login, infers email)
+  aacc claude add [name]          Add an account and log Claude Code in
+  aacc add claude [name]          Same as 'aacc claude add'
   aacc claude list                List all profiles with auth status
-  aacc claude switch [name]       Switch active profile
+  aacc claude switch [name]       Switch the Claude Code login
   aacc claude remove <name>       Remove a profile
   aacc claude env                 Print export CLAUDE_CONFIG_DIR=...
   aacc claude run [name] [...]    Launch Claude with a specific profile
   aacc claude <name> [...]        Shorthand for 'aacc claude run <name>'
   aacc claude help                Show this help
 
-Shell integration (add to ~/.zshrc or ~/.bashrc):
-  eval "$(aacc claude env)"
+Adding or switching writes the login Claude Code reads by default.
+Restart Claude Code if a session is already open. \`aacc claude env\` is only
+needed for that profile's settings and session history, not for the login.
 `;
 /** Fetch auth status, credentials, and usage for all profiles in parallel */
 export async function loadClaudeProfiles() {
@@ -156,9 +158,17 @@ async function cmdAdd(name) {
                 }
                 const displayEmail = auth.email ? ` (${auth.email})` : "";
                 const displayPlan = auth.subscriptionType ? ` [${auth.subscriptionType}]` : "";
+                setActiveProfile(profileName);
+                try {
+                    await installClaudeLogin(instancePath);
+                }
+                catch (error) {
+                    console.error(`\nAdded Claude profile "${profileName}", but Claude Code is not logged in: ${error.message}`);
+                    console.error(`Retry with: aacc claude switch ${profileName}`);
+                    process.exit(1);
+                }
                 console.log(`\nAdded Claude profile "${profileName}".${displayEmail}${displayPlan}`);
-                console.log(`\n  aacc claude switch ${profileName}   Set as active profile`);
-                console.log(`  aacc claude run ${profileName}      Launch Claude with this profile`);
+                console.log("Claude Code is logged in as this account. Restart Claude Code if it is already open.");
                 resolve();
             }
             else {
@@ -187,15 +197,32 @@ function resolveClaudeProfileName(name) {
     }
     return matches[0].name;
 }
-export function activateClaudeProfile(name) {
+export async function activateClaudeProfile(name) {
     const selected = resolveClaudeProfileName(name);
-    if (getActiveProfile() === selected)
+    const instancePath = getInstancePath(selected);
+    const before = await readCredential(defaultClaudeConfigDir());
+    let credential = await readCredential(instancePath);
+    if (!credential?.accessToken) {
+        throw new Error(`Claude profile "${selected}" has no saved login. Run 'aacc claude add' again.`);
+    }
+    try {
+        credential = await ensureFreshClaudeCredential(instancePath, credential);
+    }
+    catch {
+        // Install the saved login even when a refresh fails. Claude can refresh it on launch.
+    }
+    const unchanged = getActiveProfile() === selected
+        && !!credential.refreshToken
+        && before?.refreshToken === credential.refreshToken
+        && before?.accessToken === credential.accessToken;
+    if (unchanged)
         return alreadyActiveOutcome(selected);
+    await installClaudeLogin(instancePath);
     setActiveProfile(selected);
     return {
         status: "switched",
         label: selected,
-        hint: `eval "$(aacc claude env)"`,
+        hint: "restart Claude Code if it is already open",
     };
 }
 async function cmdSwitch(name) {
@@ -203,7 +230,7 @@ async function cmdSwitch(name) {
         return cmdPromptSwitch();
     let result;
     try {
-        result = activateClaudeProfile(name);
+        result = await activateClaudeProfile(name);
     }
     catch (err) {
         console.error(err.message);
@@ -213,10 +240,8 @@ async function cmdSwitch(name) {
         console.log(`Already using Claude profile: ${result.label}`);
         return;
     }
-    const instancePath = getInstancePath(result.label);
     console.log(`Active Claude profile: ${result.label}`);
-    console.log(`\n  export CLAUDE_CONFIG_DIR=${instancePath}`);
-    console.log(`\nOr add to shell rc: eval "$(aacc claude env)"`);
+    console.log("Claude Code is logged in as this account. Restart Claude Code if it is already open.");
 }
 async function cmdPromptSwitch() {
     const infos = await loadClaudeProfiles();
